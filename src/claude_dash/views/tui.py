@@ -123,7 +123,10 @@ class DashboardApp(App):
                 yield Static(id="tools-content", expand=True)
             with TabPane("Session (4)", id="tab-session"):
                 with Vertical():
-                    yield Label("Selecione uma sessão (↑/↓, Enter):", id="session-hint")
+                    yield Label(
+                        "↑/↓ navega  •  Enter abre o drill-down da sessão selecionada",
+                        id="session-hint",
+                    )
                     yield ListView(id="session-list")
                     yield Static(id="session-detail")
         yield Footer()
@@ -143,6 +146,25 @@ class DashboardApp(App):
         self._refresh_session_list()
         # Auto-refresh só da Now (demais via `r` manual)
         self.set_interval(NOW_REFRESH_SEC, self._refresh_now)
+
+    def on_tabbed_content_tab_activated(
+        self, event: TabbedContent.TabActivated
+    ) -> None:
+        """Foca o widget interativo da aba ao ativá-la.
+
+        Sem isso, o ListView da aba Session não recebe eventos de
+        teclado mesmo quando visível — Enter/Space caem nas bindings
+        globais da App e o Selected nunca dispara. Resultado: usuário
+        vê os itens navegáveis por seta mas não consegue selecionar.
+        """
+        if event.pane.id == "tab-session":
+            try:
+                list_view = self.query_one("#session-list", ListView)
+                if len(list_view.children) > 0 and list_view.index is None:
+                    list_view.index = 0
+                list_view.focus()
+            except Exception:  # noqa: BLE001
+                pass
 
     # ----- Actions -------------------------------------------------------
 
@@ -239,6 +261,12 @@ class DashboardApp(App):
 
         for sid, label in entries:
             list_view.append(SessionListItem(sid=sid, label=label))
+
+        # Garante que há um item "current" desde o primeiro render —
+        # sem isso, Enter num ListView recém-populado não dispara
+        # Selected porque não há índice focado.
+        if list_view.index is None:
+            list_view.index = 0
 
     def _render_session_detail(self, sid: str) -> None:
         """Chamado quando o usuário seleciona um SID na lista."""

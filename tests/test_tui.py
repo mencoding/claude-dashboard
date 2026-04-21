@@ -74,14 +74,15 @@ def test_session_tab_enter_triggers_drill_down() -> None:
     """Regressão: pressionar Enter num SessionListItem deve chamar
     _render_session_detail com o sid correto.
 
-    Bug anterior (v0.6.0): atributo `.data` em ListItem não persistia
-    confiavelmente, então on_list_view_selected recebia None e o
-    drill-down silenciosamente não acontecia. Subclassando ListItem
-    em SessionListItem, o atributo `.sid` fica tipado e estável.
+    Fluxo simulado é o REAL do usuário (sem focus() explícito): troca
+    pra aba Session com tecla 4 e pressiona Enter. O bug original era
+    `.data` não persistir em ListItem; o bug secundário (v0.7.0) é que
+    a ListView não recebia foco automaticamente ao ativar a aba, então
+    Enter caía nas bindings globais. Fix: hook em on_tabbed_content_tab_activated
+    que chama list_view.focus() ao ativar a aba Session.
     """
     async def run():
         app = DashboardApp()
-        # Substitui _render_session_detail por spy
         called_with: list[str] = []
 
         def spy(sid: str) -> None:
@@ -90,12 +91,11 @@ def test_session_tab_enter_triggers_drill_down() -> None:
         async with app.run_test() as pilot:
             await pilot.pause(0.5)
             app._render_session_detail = spy  # type: ignore[method-assign]
-            # Ir pra aba Session
-            await pilot.press("4")
-            await pilot.pause(0.2)
 
-            # Garante que a lista tem pelo menos 1 item (ou o teste
-            # é inerte — depende do filesystem real do ambiente de teste)
+            # Troca pra aba Session — deve focar ListView automaticamente
+            await pilot.press("4")
+            await pilot.pause(0.3)
+
             from claude_dash.views.tui import SessionListItem
             from textual.widgets import ListView
 
@@ -104,10 +104,11 @@ def test_session_tab_enter_triggers_drill_down() -> None:
             if not session_items:
                 return  # Ambiente sem transcripts → nada a testar
 
-            # Foca na ListView e simula Enter no primeiro item
-            list_view.focus()
-            list_view.index = 0
-            await pilot.pause(0.1)
+            # Nenhum focus() explícito aqui — deve estar focado pelo hook
+            assert list_view.has_focus, "ListView não foi focado automaticamente ao ativar a aba"
+            # Primeiro item deve estar highlighted desde o populate
+            assert list_view.index == 0
+
             await pilot.press("enter")
             await pilot.pause(0.2)
 
