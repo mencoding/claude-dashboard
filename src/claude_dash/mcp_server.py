@@ -193,11 +193,12 @@ def rate_limits() -> dict[str, Any]:
     Retorna:
     - `installed`: True se há pelo menos 1 snapshot capturado (proxy
       para "usuário instalou o hook `claude-dash-rate-limit-capture`")
-    - `global_worst_case`: pior caso entre sessões vivas (5h%, 7d%,
-      tempo até reset) — rate limits são por conta, então o "pior
-      caso" reflete o estado real
+    - `global_worst_case`: pior caso entre sessões com snapshots
+      **frescos** (capturados nos últimos 15 min). Pode ser `None`
+      mesmo com `installed=True` se todos os snapshots estão stale —
+      sessões idle/encerradas. Consumidores devem checar explicitamente.
     - `by_session`: dict com snapshot por sessão (inclui age e
-      freshness)
+      freshness — o campo `is_fresh` distingue ativos de stale)
 
     Se o hook não estiver instalado, retorna `{"installed": false}`
     — instruções no README para adicionar uma linha no statusline

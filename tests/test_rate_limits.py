@@ -109,6 +109,29 @@ class TestGlobalWorstCase:
     def test_worst_case_none_when_empty(self, cap_dir: Path) -> None:
         assert global_worst_case(cap_dir) is None
 
+    def test_worst_case_picks_by_max_of_5h_or_7d(self, cap_dir: Path) -> None:
+        """Um snapshot com 7d% alto deve ganhar mesmo que 5h% seja baixo.
+
+        Regressão do review do PR #15: critério anterior era `max(5h%)`
+        isolado, perdia casos onde o 7d é o gargalo real (consumo
+        semanal alto mas janela de 5h resetou recente).
+        """
+        # Snapshot A: 5h baixo, 7d crítico (pior caso real)
+        capture_from_json(
+            _sample_statusline_json(sid="seven-day-crit", five_pct=10, seven_pct=92),
+            cap_dir,
+        )
+        # Snapshot B: 5h moderado, 7d baixo
+        capture_from_json(
+            _sample_statusline_json(sid="five-hour-mid", five_pct=55, seven_pct=20),
+            cap_dir,
+        )
+        worst = global_worst_case(cap_dir)
+        assert worst is not None
+        # Escolhe pelo 7d=92, não pelo 5h=55
+        assert worst.session_id == "seven-day-crit"
+        assert worst.seven_day_pct == 92
+
 
 class TestFormatResetDelta:
     def test_zero_returns_empty(self) -> None:

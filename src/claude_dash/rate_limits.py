@@ -123,15 +123,22 @@ def global_worst_case(
 ) -> RateLimitSnapshot | None:
     """Snapshot "pior caso" entre todas as sessões capturadas.
 
-    Rate limits são por conta (compartilhados entre sessões). O maior
-    `five_hour_pct` reflete o estado real da conta no momento mais
-    recente capturado. Retorna None se não há snapshots frescos.
+    Rate limits são por conta (compartilhados entre sessões). O snapshot
+    retornado é o que tem o maior percentual entre 5h E 7d — qualquer
+    um dos dois perto do throttle é motivo para atenção. Em empate,
+    desempate pelo mais recente.
+
+    Retorna None se não há snapshots frescos (<15 min).
     """
     fresh = [s for s in read_all(capture_dir).values() if s.is_fresh]
     if not fresh:
         return None
-    # Escolhe o snapshot com maior 5h% (mais recente em caso de empate)
-    return max(fresh, key=lambda s: (s.five_hour_pct, s.captured_at_ms))
+    # Pior caso = max entre 5h% e 7d% (qualquer um crítico pesa igual),
+    # desempate por captured_at_ms descendente
+    return max(
+        fresh,
+        key=lambda s: (max(s.five_hour_pct, s.seven_day_pct), s.captured_at_ms),
+    )
 
 
 def format_reset_delta(seconds: int) -> str:
