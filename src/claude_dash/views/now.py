@@ -18,6 +18,11 @@ from claude_dash.account import AccountInfo, read_account_info
 from claude_dash.aggregator import collect_live_sessions
 from claude_dash.models import SessionStats, Usage
 from claude_dash.pricing import cost_of
+from claude_dash.rate_limits import (
+    RateLimitSnapshot,
+    format_reset_delta,
+    global_worst_case,
+)
 
 
 REFRESH_SEC = 2.0
@@ -210,6 +215,36 @@ def _account_line(acc: AccountInfo | None) -> Text:
     return line
 
 
+def _rate_limit_line(snap: RateLimitSnapshot | None) -> Text:
+    """Linha com consumo 5h/7d da conta; vazia se não há captura.
+
+    Só aparece quando o hook opcional `claude-dash-rate-limit-capture`
+    está instalado. Sem captura, a linha é omitida (graceful degradation).
+    """
+    line = Text()
+    if snap is None or not snap.is_fresh:
+        return line
+    line.append(" Rate limits ", style="dim")
+    # 5h
+    pct5 = snap.five_hour_pct
+    color5 = "bold red" if pct5 >= 85 else "bold yellow" if pct5 >= 60 else "bold"
+    line.append("5h ", style="dim")
+    line.append(f"{pct5:.0f}%", style=color5)
+    delta5 = format_reset_delta(snap.five_hour_resets_in_seconds)
+    if delta5:
+        line.append(f" ↻{delta5}", style="dim")
+    line.append("   ", style="dim")
+    # 7d
+    pct7 = snap.seven_day_pct
+    color7 = "bold red" if pct7 >= 85 else "bold yellow" if pct7 >= 60 else "bold"
+    line.append("7d ", style="dim")
+    line.append(f"{pct7:.0f}%", style=color7)
+    delta7 = format_reset_delta(snap.seven_day_resets_in_seconds)
+    if delta7:
+        line.append(f" ↻{delta7}", style="dim")
+    return line
+
+
 def _header(sessions: list[SessionStats]) -> Panel:
     n = len(sessions)
     total_tokens = sum(s.total_usage.total for s in sessions)
@@ -235,6 +270,10 @@ def _header(sessions: list[SessionStats]) -> Panel:
     if len(acc_line) > 0:
         header_text.append_text(acc_line)
         header_text.append("\n")
+    rl_line = _rate_limit_line(global_worst_case())
+    if len(rl_line) > 0:
+        header_text.append_text(rl_line)
+        header_text.append("\n")
     header_text.append(f" {now}  ", style="dim")
     header_text.append(f"│  Sessões vivas: ", style="dim")
     header_text.append(f"{n}", style="bold cyan")
@@ -258,9 +297,15 @@ def _footer(refresh_sec: float) -> Panel:
 
 
 def _render(sessions: list[SessionStats], refresh_sec: float) -> Layout:
+    # Header: 1 borda sup + data/stats + 1 borda inf = 3 linhas base.
+    # Linhas condicionais: +1 se tem account info, +1 se tem rate limits.
+    has_account = read_account_info() is not None
+    has_rl = global_worst_case() is not None
+    header_size = 3 + (1 if has_account else 0) + (1 if has_rl else 0)
+
     layout = Layout()
     layout.split_column(
-        Layout(_header(sessions), size=4, name="header"),
+        Layout(_header(sessions), size=header_size, name="header"),
         Layout(Panel(_session_table(sessions), border_style="dim", title="Sessões",
                      title_align="left"), name="body"),
         Layout(_footer(refresh_sec), size=3, name="footer"),

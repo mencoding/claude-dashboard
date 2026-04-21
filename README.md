@@ -55,6 +55,28 @@ claude-dash tools              # breakdown de tool_use últimas 24h
 claude-dash session <sid>      # drill-down (prefixo de sessionId aceito)
 ```
 
+### Rate limits 5h/7d (hook opcional)
+
+Desde v0.9, o dashboard pode exibir o consumo real dos rate limits da
+conta (5h e 7d) — especialmente útil em planos flat-rate (Max/Pro),
+onde o custo em USD é hipotético e o que importa é **quanto do limite
+já foi usado**.
+
+O Claude Code só injeta `rate_limits` no JSON do statusline — por
+isso a captura requer uma linha extra no seu script de statusline
+(`settings.json:statusLine.command`). Instalação:
+
+1. Identifique o script configurado em `~/.claude/settings.json:statusLine.command`.
+2. Adicione no **topo** do seu script (depois do `input=$(cat)`):
+   ```bash
+   echo "$input" | claude-dash-rate-limit-capture > /dev/null
+   ```
+3. Reinicie a sessão do Claude Code. A cada render do statusline,
+   o snapshot de rate limits é gravado em `/tmp/claude-dash-rate-limits/`.
+
+Sem o hook instalado, o dashboard continua funcional — apenas omite a
+linha de rate limits no header. Graceful degradation.
+
 ### MCP server — canal para agentes
 
 A partir da v0.7, um servidor MCP expõe o estado do Claude Code como
@@ -82,6 +104,8 @@ Ferramentas expostas:
 | `today_summary` | Agregado do dia corrente |
 | `tools_breakdown(hours=24)` | Breakdown de `tool_use` no período |
 | `session_details(sid)` | Drill-down de 1 sessão |
+| `account_info` | Conta, organização, billing type (flat-rate vs API) |
+| `rate_limits` | Consumo 5h/7d (se hook opcional instalado) |
 | `workflow_snapshot` | **Canal unificado** — resumo + alertas acionáveis |
 
 ## Instalação

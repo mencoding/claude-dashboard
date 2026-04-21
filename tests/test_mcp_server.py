@@ -85,16 +85,47 @@ def test_workflow_snapshot_has_alerts_section() -> None:
 
 
 def test_workflow_snapshot_alert_on_high_cost() -> None:
-    """Custo agregado do dia > $200 dispara alerta."""
+    """Custo agregado do dia > $200 dispara alerta (apenas em billing API).
+
+    Em plano flat-rate (is_flat_rate=True), o alerta de custo em USD é
+    suprimido porque o valor não representa cobrança real — o usuário
+    paga mensalidade fixa. Este teste valida o caminho API.
+    """
     big_spender = _mk_session(
         cost_usage=Usage(input_tokens=50_000_000),  # $250 em input Opus
     )
     with patch.object(mcp_server, "collect_live_sessions", return_value=[]), \
          patch.object(mcp_server, "collect_sessions_since", return_value=[big_spender]), \
-         patch.object(mcp_server, "collect_tool_usage_since", return_value={}):
+         patch.object(mcp_server, "collect_tool_usage_since", return_value={}), \
+         patch.object(mcp_server, "read_account_info", return_value=None):
+        # read_account_info=None é tratado como "API billing" (caminho
+        # conservador — quando não se sabe, assume-se que USD é real)
         snap = mcp_server.workflow_snapshot()
 
     assert any("Consumo agregado do dia" in a for a in snap["alerts"])
+
+
+def test_workflow_snapshot_suppresses_cost_alert_on_flat_rate() -> None:
+    """Em billing flat-rate, alerta de custo diário é suprimido."""
+    from claude_dash.account import AccountInfo, BILLING_FLAT_RATE
+
+    big_spender = _mk_session(
+        cost_usage=Usage(input_tokens=50_000_000),
+    )
+    flat_rate_account = AccountInfo(
+        email="x@y.com", display_name="", organization_name="",
+        organization_role="", billing_type=BILLING_FLAT_RATE,
+        has_extra_usage_enabled=False, extra_usage_disabled_reason=None,
+        first_token_date=None, account_uuid="", organization_uuid="",
+    )
+    with patch.object(mcp_server, "collect_live_sessions", return_value=[]), \
+         patch.object(mcp_server, "collect_sessions_since", return_value=[big_spender]), \
+         patch.object(mcp_server, "collect_tool_usage_since", return_value={}), \
+         patch.object(mcp_server, "read_account_info", return_value=flat_rate_account):
+        snap = mcp_server.workflow_snapshot()
+
+    # Alerta de custo NÃO deve aparecer porque is_flat_rate=True
+    assert not any("Consumo agregado do dia" in a for a in snap["alerts"])
 
 
 def test_workflow_snapshot_alert_on_high_context() -> None:

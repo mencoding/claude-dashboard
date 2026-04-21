@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from claude_dash.account import read_account_info
+from claude_dash.rate_limits import global_worst_case, read_all as read_rate_limits
 from claude_dash.aggregator import (
     build_stats_for_transcript,
     collect_live_sessions,
@@ -117,16 +118,36 @@ def _infer_alerts(
                 f"— próximo do limite 200k da janela padrão; considerar /compact."
             )
 
-    # Custo agregado do dia — sinal de sessão maratônica
-    total_cost_today = sum(
-        sum(cost_of(m, u) for m, u in s.usage_by_model.items())
-        for s in today_stats
-    )
-    if total_cost_today > 200:
-        alerts.append(
-            f"Consumo agregado do dia: ${total_cost_today:.2f}. Está acima do "
-            f"típico — revise se alguma sessão está em loop."
+    # Custo agregado do dia — sinal de sessão maratônica. Só relevante
+    # em billing pay-as-you-go; em assinatura flat-rate o custo em USD
+    # é hipotético (ver `account.is_flat_rate`).
+    acc = read_account_info()
+    if acc is None or not acc.is_flat_rate:
+        total_cost_today = sum(
+            sum(cost_of(m, u) for m, u in s.usage_by_model.items())
+            for s in today_stats
         )
+        if total_cost_today > 200:
+            alerts.append(
+                f"Consumo agregado do dia: ${total_cost_today:.2f}. Está acima do "
+                f"típico — revise se alguma sessão está em loop."
+            )
+
+    # Rate limits — só gera alerta se o hook opcional estiver instalado
+    worst_rl = global_worst_case()
+    if worst_rl is not None:
+        if worst_rl.five_hour_pct >= 85:
+            delta = max(0, worst_rl.five_hour_resets_in_seconds // 60)
+            alerts.append(
+                f"Rate limit 5h em {worst_rl.five_hour_pct:.0f}% — reset em "
+                f"~{delta} min. Sessões pesadas próximas do throttle."
+            )
+        if worst_rl.seven_day_pct >= 85:
+            days = max(0, worst_rl.seven_day_resets_in_seconds // 86400)
+            alerts.append(
+                f"Rate limit 7d em {worst_rl.seven_day_pct:.0f}% — reset em "
+                f"~{days} dia(s). Consumo semanal perto do limite do plano."
+            )
 
     return alerts
 
@@ -163,6 +184,54 @@ def account_info() -> dict[str, Any]:
         "account_uuid": acc.account_uuid,
         "organization_uuid": acc.organization_uuid,
     }
+
+
+@mcp.tool()
+def rate_limits() -> dict[str, Any]:
+    """Consumo atual dos rate limits 5h/7d (se hook opcional instalado).
+
+    Retorna:
+    - `installed`: True se há pelo menos 1 snapshot capturado (proxy
+      para "usuário instalou o hook `claude-dash-rate-limit-capture`")
+    - `global_worst_case`: pior caso entre sessões com snapshots
+      **frescos** (capturados nos últimos 15 min). Pode ser `None`
+      mesmo com `installed=True` se todos os snapshots estão stale —
+      sessões idle/encerradas. Consumidores devem checar explicitamente.
+    - `by_session`: dict com snapshot por sessão (inclui age e
+      freshness — o campo `is_fresh` distingue ativos de stale)
+
+    Se o hook não estiver instalado, retorna `{"installed": false}`
+    — instruções no README para adicionar uma linha no statusline
+    do usuário.
+    """
+    all_snaps = read_rate_limits()
+    if not all_snaps:
+        return {"installed": False, "reason": "nenhum snapshot em /tmp/claude-dash-rate-limits/"}
+
+    worst = global_worst_case()
+    result: dict[str, Any] = {
+        "installed": True,
+        "global_worst_case": None,
+        "by_session": {},
+    }
+    if worst is not None:
+        result["global_worst_case"] = {
+            "five_hour_pct": worst.five_hour_pct,
+            "five_hour_resets_in_seconds": worst.five_hour_resets_in_seconds,
+            "seven_day_pct": worst.seven_day_pct,
+            "seven_day_resets_in_seconds": worst.seven_day_resets_in_seconds,
+            "captured_from_session": worst.session_id,
+            "age_seconds": worst.age_ms // 1000,
+        }
+    for sid, snap in all_snaps.items():
+        result["by_session"][sid] = {
+            "five_hour_pct": snap.five_hour_pct,
+            "seven_day_pct": snap.seven_day_pct,
+            "age_seconds": snap.age_ms // 1000,
+            "is_fresh": snap.is_fresh,
+            "model_id": snap.model_id,
+        }
+    return result
 
 
 @mcp.tool()
@@ -308,7 +377,10 @@ def workflow_snapshot() -> dict[str, Any]:
       (1) output/turno alto em sessão viva,
       (2) sessão viva sem atividade há > 30 min,
       (3) contexto ativo > 150k tokens (perto do limite 200k),
-      (4) custo agregado do dia > $200.
+      (4) custo agregado do dia > $200 (só em API billing — ignorado
+          em plano flat-rate onde custo USD é hipotético),
+      (5) rate limit 5h ≥ 85% (requer hook opcional instalado),
+      (6) rate limit 7d ≥ 85% (requer hook opcional instalado).
     """
     live = collect_live_sessions()
     today = collect_sessions_since(today_start_ms())
@@ -338,6 +410,17 @@ def workflow_snapshot() -> dict[str, Any]:
     peak_hour = hourly.index(max(hourly)) if any(hourly) else None
 
     acc = read_account_info()
+    worst_rl = global_worst_case()
+
+    rate_limits_block: dict[str, Any] = {"installed": False}
+    if worst_rl is not None:
+        rate_limits_block = {
+            "installed": True,
+            "five_hour_pct": worst_rl.five_hour_pct,
+            "seven_day_pct": worst_rl.seven_day_pct,
+            "five_hour_resets_in_seconds": worst_rl.five_hour_resets_in_seconds,
+            "seven_day_resets_in_seconds": worst_rl.seven_day_resets_in_seconds,
+        }
 
     return {
         "generated_at": datetime.now().isoformat(),
@@ -346,6 +429,7 @@ def workflow_snapshot() -> dict[str, Any]:
             "billing_label": acc.billing_label if acc else None,
             "is_flat_rate": acc.is_flat_rate if acc else None,
         },
+        "rate_limits": rate_limits_block,
         "active": {
             "sessions_count": len(live),
             "workspaces": sorted({str(s.cwd) for s in live}),
