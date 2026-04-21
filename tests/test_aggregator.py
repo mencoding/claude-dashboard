@@ -318,3 +318,84 @@ def test_last_usage_survives_cache_roundtrip(
     assert stats2.last_usage is not None
     assert stats2.last_usage.input_tokens == 42
     assert stats2.last_usage.cache_read == 999
+
+
+# --- aggregate_transcript_since -----------------------------------------
+
+
+def test_since_filters_before_cutoff(tmp_path: Path, isolated_cache: Path) -> None:
+    """Entradas com timestamp < since_ms são descartadas."""
+    from claude_dash.aggregator import aggregate_transcript_since
+
+    entries = [
+        {"type": "assistant", "timestamp": "2026-04-20T10:00:00Z",
+         "message": {"model": "m", "usage": {"input_tokens": 111}}},
+        {"type": "assistant", "timestamp": "2026-04-21T10:00:00Z",
+         "message": {"model": "m", "usage": {"input_tokens": 222}}},
+    ]
+    ref = _make_transcript(tmp_path, entries)
+    # Cutoff = 2026-04-21 00:00 UTC
+    cutoff = 1776758400000
+    stats = aggregate_transcript_since(ref, since_ms=cutoff)
+    # Só a entrada de 21/04 conta
+    assert stats.usage_by_model["m"].input_tokens == 222
+    assert stats.messages_assistant == 1
+
+
+def test_since_excludes_untimed_entries(
+    tmp_path: Path, isolated_cache: Path
+) -> None:
+    """Entradas sem `timestamp` não contam (conservador — sem data não dá
+    pra afirmar que estão na janela)."""
+    from claude_dash.aggregator import aggregate_transcript_since
+
+    entries = [
+        {"type": "assistant",  # sem timestamp
+         "message": {"model": "m", "usage": {"input_tokens": 10}}},
+    ]
+    ref = _make_transcript(tmp_path, entries)
+    stats = aggregate_transcript_since(ref, since_ms=0)
+    assert stats.usage_by_model == {}
+    assert stats.messages_assistant == 0
+
+
+def test_collect_sessions_since_filters_by_mtime(
+    tmp_path: Path, isolated_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """collect_sessions_since ignora transcripts com mtime antes da janela."""
+    from claude_dash import aggregator
+    from claude_dash.aggregator import collect_sessions_since
+    from claude_dash.discover import TranscriptRef
+
+    # Transcripts sintéticos: um antigo (mtime pequeno) e um novo
+    old_entries = [
+        {"type": "assistant", "timestamp": "2026-04-20T10:00:00Z",
+         "message": {"model": "m", "usage": {"input_tokens": 1}}},
+    ]
+    new_entries = [
+        {"type": "assistant", "timestamp": "2026-04-21T10:00:00Z",
+         "message": {"model": "m", "usage": {"input_tokens": 999}}},
+    ]
+
+    old_file = tmp_path / "old.jsonl"
+    new_file = tmp_path / "new.jsonl"
+    old_file.write_text("\n".join(json.dumps(e) for e in old_entries) + "\n")
+    new_file.write_text("\n".join(json.dumps(e) for e in new_entries) + "\n")
+    # Força mtime antigo no old_file
+    os.utime(old_file, (1700000000, 1700000000))
+
+    refs = [
+        TranscriptRef(session_id="old", path=old_file, workspace="-ws",
+                      mtime_ms=int(old_file.stat().st_mtime * 1000)),
+        TranscriptRef(session_id="new", path=new_file, workspace="-ws",
+                      mtime_ms=int(new_file.stat().st_mtime * 1000)),
+    ]
+
+    monkeypatch.setattr(aggregator, "discover_live_sessions", lambda: [])
+    monkeypatch.setattr(aggregator, "discover_transcripts", lambda: refs)
+
+    cutoff = 1776758400000  # 2026-04-21 00:00 UTC
+    result = collect_sessions_since(cutoff)
+    sids = [s.session_id for s in result]
+    assert "new" in sids
+    assert "old" not in sids
