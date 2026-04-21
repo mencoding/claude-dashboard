@@ -25,19 +25,20 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    # Placeholders — views serão implementadas nas próximas iterações
     if args.command == "now":
-        print("TODO: view 'now' — TUI viva com rich.Live")
-    elif args.command == "today":
-        print("TODO: view 'today' — agregado do dia")
-    elif args.command == "tools":
-        print("TODO: view 'tools' — breakdown de tool_use")
-    elif args.command == "session":
-        print(f"TODO: view 'session' para sid={args.sid!r}")
-    else:  # pragma: no cover
-        return 2
+        from claude_dash.views.now import run as run_now
 
-    return 0
+        return run_now()
+    if args.command == "today":
+        print("TODO: view 'today' — agregado do dia (v0.2)")
+        return 0
+    if args.command == "tools":
+        print("TODO: view 'tools' — breakdown de tool_use (v0.2)")
+        return 0
+    if args.command == "session":
+        print(f"TODO: view 'session' para sid={args.sid!r} (v0.3)")
+        return 0
+    return 2  # pragma: no cover
 
 
 if __name__ == "__main__":
