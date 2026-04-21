@@ -188,7 +188,8 @@ def _subagents_panel(session_id: str) -> Panel | None:
     table.add_column("Subagent ID", width=20)
     table.add_column("Tokens", justify="right", width=10)
     table.add_column("Custo", justify="right", width=9)
-    table.add_column("Msgs", justify="right", width=6)
+    # Formato u/a (user/assistant) alinhado com o resto do dashboard
+    table.add_column("Msgs (u/a)", justify="right", width=10)
     table.add_column("Tools", overflow="fold")
 
     for sub in subs:
@@ -203,7 +204,7 @@ def _subagents_panel(session_id: str) -> Panel | None:
             sub.session_id,
             _fmt_tokens(sub_stats.total_usage.total),
             f"${cost:,.2f}",
-            str(sub_stats.messages_assistant),
+            f"{sub_stats.messages_user}/{sub_stats.messages_assistant}",
             tools_str,
         )
 

@@ -238,10 +238,12 @@ def extract_turns(ref: TranscriptRef) -> list[Turn]:
     `tools_called` do turno são os `tool_use` encontrados no mesmo
     `message.content[]`. Turnos sem timestamp herdam o timestamp da
     entry imediatamente anterior que tinha um (fallback para ordenar
-    sem perder informação).
+    sem perder informação). Se nenhum timestamp foi visto antes do
+    primeiro turno, o `timestamp_ms` fica 0 e a view exibe "—" em vez
+    do epoch 1970 — isso é tratado em `_timeline` e `_header`.
     """
     turns: list[Turn] = []
-    last_ts = 0
+    last_ts: int | None = None
     for _offset, entry in iter_entries(ref.path):
         ts = extract_timestamp_ms(entry)
         if ts is not None:
@@ -257,10 +259,13 @@ def extract_turns(ref: TranscriptRef) -> list[Turn]:
         model_raw = extract_model(entry) or "unknown"
         tools = list(iter_tool_uses(entry))
 
+        # Se não há ts nem last_ts, salva 0 — o display checa e exibe "—"
+        effective_ts = ts if ts is not None else (last_ts if last_ts is not None else 0)
+
         turns.append(
             Turn(
                 index=len(turns),
-                timestamp_ms=ts if ts is not None else last_ts,
+                timestamp_ms=effective_ts,
                 model=model_raw,
                 usage=u,
                 tools_called=tools,

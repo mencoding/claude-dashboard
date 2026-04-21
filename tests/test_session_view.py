@@ -89,3 +89,18 @@ def test_extract_turns_preserves_raw_model(tmp_path: Path) -> None:
     turns = extract_turns(_make_ref(tmp_path, entries))
     assert turns[0].model == "claude-opus-4-7[1m]"
     assert turns[0].cost_estimate_key == "claude-opus-4-7"
+
+
+def test_extract_turns_no_timestamps_keeps_zero(tmp_path: Path) -> None:
+    """Se nenhum timestamp foi visto antes do primeiro turno, timestamp_ms=0.
+
+    A view é responsável por exibir '—' em vez de epoch 1970 — aqui
+    validamos que o aggregator não inventa um timestamp falso.
+    """
+    entries = [
+        {"type": "assistant",  # sem timestamp, sem user anterior
+         "message": {"model": "m", "usage": {"input_tokens": 1}}},
+    ]
+    turns = extract_turns(_make_ref(tmp_path, entries))
+    assert len(turns) == 1
+    assert turns[0].timestamp_ms == 0  # cai no fallback final
