@@ -164,6 +164,19 @@ claude_dashboard/
 - [x] `scripts/claude-dash-tui` — launcher bash abre terminal novo
   (detecta gnome-terminal, kitty, alacritty, konsole, xterm, etc.)
 - [x] Subcomandos explícitos preservados para uso scriptável
+- [x] **Tag v0.6.0 publicada** (PR #8)
+- [x] **Fix pós-release**: Enter na aba Session agora dispara
+  drill-down corretamente (SessionListItem subclass em vez de
+  `.data` hack) — PR #9
+
+### v0.7 — MCP server (canal para agentes)
+- [x] `claude-dash-mcp` entrypoint expõe o estado via Model Context Protocol
+- [x] Tools: `active_sessions`, `today_summary`, `tools_breakdown`,
+  `session_details`, `workflow_snapshot`
+- [x] `workflow_snapshot` é o "canal unificado": agrega fontes e
+  gera **alertas** acionáveis (custo alto, contexto próximo do
+  limite, sessões sem atividade)
+- [x] Integração com Claude Code via `~/.claude/settings.json`
 
 ### v0.3 — Drill-down
 - [ ] View `session <sid>`

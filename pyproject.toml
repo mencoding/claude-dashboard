@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-dashboard"
-version = "0.6.0"
+version = "0.7.0.dev0"
 description = "TUI dashboard for Claude Code sessions, tokens, tools and cost"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "rich>=13.7",
     "textual>=0.80",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,7 @@ dev = [
 
 [project.scripts]
 claude-dash = "claude_dash.cli:main"
+claude-dash-mcp = "claude_dash.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/mencoding/claude-dashboard"
