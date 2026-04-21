@@ -246,12 +246,19 @@ class DashboardApp(App):
         entries: list[tuple[str, str]] = []
         seen: set[str] = set()
 
-        # Sessões vivas primeiro
+        # Sessões vivas primeiro. O marcador de estado usa texto
+        # colorido ("viva"/"morta") em vez de ●/○ porque esses ícones
+        # são convencionalmente radio buttons — usuário interpretava
+        # "● = item selecionado" em vez de "sessão ativa". O highlight
+        # de seleção já é fornecido pelo ListView do Textual.
         for ls in discover_live_sessions():
             if ls.session_id in seen:
                 continue
             seen.add(ls.session_id)
-            label = f"● {ls.session_id[:8]}…  {ls.cwd}  (viva, pid={ls.pid})"
+            label = (
+                f"[bold green]viva[/bold green]  "
+                f"{ls.session_id[:8]}…  {ls.cwd}  pid={ls.pid}"
+            )
             entries.append((ls.session_id, label))
 
         # Sessões do dia (mesmo que mortas)
@@ -259,8 +266,11 @@ class DashboardApp(App):
             if s.session_id in seen:
                 continue
             seen.add(s.session_id)
-            state = "viva" if s.alive else "morta"
-            label = f"○ {s.session_id[:8]}…  {s.cwd}  ({state})"
+            if s.alive:
+                state_markup = "[bold green]viva [/bold green]"
+            else:
+                state_markup = "[bold red]morta[/bold red]"
+            label = f"{state_markup}  {s.session_id[:8]}…  {s.cwd}"
             entries.append((s.session_id, label))
 
         if not entries:
