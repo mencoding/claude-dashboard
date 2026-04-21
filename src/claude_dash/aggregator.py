@@ -10,7 +10,7 @@ from claude_dash.discover import (
     discover_live_sessions,
     discover_transcripts,
 )
-from claude_dash.models import SessionStats, ToolUsageStats, Usage
+from claude_dash.models import SessionStats, ToolUsageStats, Turn, Usage
 from claude_dash.parser import (
     extract_model,
     extract_timestamp_ms,
@@ -229,6 +229,45 @@ def collect_sessions_since(since_ms: int) -> list[SessionStats]:
 
     out.sort(key=lambda s: s.last_activity_ms, reverse=True)
     return out
+
+
+def extract_turns(ref: TranscriptRef) -> list[Turn]:
+    """Extrai a lista de turnos assistant de um transcript.
+
+    Um turno = uma entrada assistant com `message.usage` presente. Os
+    `tools_called` do turno são os `tool_use` encontrados no mesmo
+    `message.content[]`. Turnos sem timestamp herdam o timestamp da
+    entry imediatamente anterior que tinha um (fallback para ordenar
+    sem perder informação).
+    """
+    turns: list[Turn] = []
+    last_ts = 0
+    for _offset, entry in iter_entries(ref.path):
+        ts = extract_timestamp_ms(entry)
+        if ts is not None:
+            last_ts = ts
+
+        if entry.get("type") != "assistant":
+            continue
+
+        u = extract_usage(entry)
+        if u is None:
+            continue
+
+        model_raw = extract_model(entry) or "unknown"
+        tools = list(iter_tool_uses(entry))
+
+        turns.append(
+            Turn(
+                index=len(turns),
+                timestamp_ms=ts if ts is not None else last_ts,
+                model=model_raw,
+                usage=u,
+                tools_called=tools,
+            )
+        )
+
+    return turns
 
 
 def collect_tool_usage_since(since_ms: int) -> dict[str, ToolUsageStats]:

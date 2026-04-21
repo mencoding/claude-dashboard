@@ -148,6 +148,13 @@ claude_dashboard/
 - [x] `aggregator.collect_tool_usage_since` (subagents atribuídos ao parent)
 - [x] Sparkline ASCII por tool + histograma agregado por hora
 
+### v0.5 — Drill-down por sessão
+- [x] View `session <sid>` com prefix matching
+- [x] `Turn` dataclass (index, timestamp, model, usage, tools_called)
+- [x] `aggregator.extract_turns` — um Turn por entrada assistant com usage
+- [x] Timeline tail (últimos 20 turnos com custo estimado por turno)
+- [x] Painel de subagentes com custo individual
+
 ### v0.3 — Drill-down
 - [ ] View `session <sid>`
 - [ ] Timeline de turnos
