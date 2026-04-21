@@ -87,11 +87,15 @@ class AccountInfo:
             'Max 5×'   (subscription=max, tier=default_claude_max_5x)
             'Max 20×'  (subscription=max, tier=default_claude_max_20x)
             'Pro'      (subscription=pro)
-            '—'        (credentials inacessível — fallback seguro)
+            '—'        (qualquer caso em que subscription_type está vazio)
 
-        Se os campos não estão disponíveis (arquivo sem permissão,
-        ausente ou sem bloco claudeAiOauth), retorna '—' e o caller
-        pode optar por `billing_label` como alternativa.
+        O '—' cobre quatro situações reais, indistinguíveis do caller:
+        (1) credentials.json inacessível (permissão/ausente),
+        (2) JSON parseável mas sem bloco `claudeAiOauth`,
+        (3) bloco existe mas `subscriptionType` é null/string vazia,
+        (4) JSON manualmente corrompido (claudeAiOauth não é dict).
+        Em qualquer um, o caller pode exibir `billing_label` como
+        fallback.
         """
         if not self.subscription_type:
             return "—"
@@ -140,9 +144,9 @@ def _read_credentials(
 ) -> tuple[str, str]:
     """Lê subscriptionType e rateLimitTier de ~/.claude/.credentials.json.
 
-    Retorna ('', '') se arquivo inacessível (permissão negada,
-    ausente, JSON inválido ou sem bloco claudeAiOauth). Os campos
-    ficam vazios e `plan_label` cai em '—'.
+    Retorna ('', '') se o arquivo não estiver acessível ou se o JSON
+    não tiver o bloco `claudeAiOauth` no formato esperado. Erros
+    silenciosos — o display cai em fallback via `plan_label`.
 
     Importante: `.credentials.json` tem permissão 0600 por design
     (contém refresh tokens). Este módulo só **lê** os campos
@@ -152,9 +156,14 @@ def _read_credentials(
         return "", ""
     try:
         data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError, PermissionError):
+    except (OSError, json.JSONDecodeError):
+        # PermissionError é subclasse de OSError — sem menção explícita.
         return "", ""
-    oauth = data.get("claudeAiOauth") or {}
+    oauth = data.get("claudeAiOauth")
+    # Proteção contra JSON manualmente corrompido (claudeAiOauth pode
+    # vir como lista/int/null caso alguém tenha editado o arquivo).
+    if not isinstance(oauth, dict):
+        return "", ""
     return (
         str(oauth.get("subscriptionType") or ""),
         str(oauth.get("rateLimitTier") or ""),
