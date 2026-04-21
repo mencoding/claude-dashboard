@@ -31,6 +31,8 @@ from claude_dash.views.now import (
     _fmt_short_cwd,
     _fmt_tokens,
     _total_cost,
+    colored_cost,
+    colored_turn_cost,
 )
 
 
@@ -86,7 +88,7 @@ def _overview(stats: SessionStats) -> Panel:
     lines.append(f"cache r {_fmt_tokens(total.cache_read)} · ", style="dim")
     lines.append(f"w {_fmt_tokens(total.cache_creation_1h + total.cache_creation_5m)})\n", style="dim")
     lines.append(f"  Custo      ", style="dim")
-    lines.append(f"${cost:,.2f}\n", style="bold yellow")
+    lines.append_text(Text.from_markup(f"{colored_cost(cost)}\n"))
     lines.append(f"  Mensagens  ", style="dim")
     lines.append(f"{stats.messages_user} user / {stats.messages_assistant} assistant\n", style="bold")
     lines.append(f"  Subagents  ", style="dim")
@@ -163,7 +165,7 @@ def _timeline(turns: list[Turn], tail: int = DEFAULT_TIMELINE_TAIL) -> Panel:
             _fmt_tokens(t.usage.input_tokens),
             _fmt_tokens(t.usage.output_tokens),
             _fmt_tokens(t.usage.cache_read),
-            f"${cost:,.4f}" if cost < 1 else f"${cost:,.2f}",
+            colored_turn_cost(cost),
             tools_str,
         )
 
@@ -203,7 +205,7 @@ def _subagents_panel(session_id: str) -> Panel | None:
         table.add_row(
             sub.session_id,
             _fmt_tokens(sub_stats.total_usage.total),
-            f"${cost:,.2f}",
+            colored_cost(cost, thresholds=(1.0, 5.0)),  # escala menor para subagents
             f"{sub_stats.messages_user}/{sub_stats.messages_assistant}",
             tools_str,
         )

@@ -26,11 +26,11 @@ def window_start_ms(window: timedelta = DEFAULT_WINDOW) -> int:
 
 
 def _histogram_bar(hist: list[int], width: int = 24) -> str:
-    """ASCII sparkline de 24 horas usando blocos Unicode."""
+    """Sparkline de 24 horas usando Unicode block elements."""
     if not any(hist):
         return " " * width
     max_val = max(hist)
-    # 8 níveis de intensidade ASCII (Unicode block elements)
+    # 8 níveis de intensidade não-brancos (U+2581..U+2588) + espaço para zero
     blocks = " ▁▂▃▄▅▆▇█"
     return "".join(
         blocks[min(len(blocks) - 1, int((v / max_val) * (len(blocks) - 1) + 0.5))]

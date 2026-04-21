@@ -1,8 +1,17 @@
 """Tabela de preços e cálculo de custo estimado.
 
-Valores em USD por milhão de tokens. Atualizado em 2026-04-21 contra
-os preços públicos Anthropic. **Validação pendente contra a página
-oficial** — ver TODO abaixo.
+Valores em USD por milhão de tokens. Validado em 2026-04-21 contra
+https://claude.com/pricing e
+https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+
+Invariantes documentados pela Anthropic (consistentes entre modelos):
+- Output = 5× Input
+- Cache read = 0.1× Input
+- Cache write 5m = 1.25× Input
+- Cache write 1h = 2× Input
+
+Se a Anthropic alterar preços, basta ajustar `input_usd_per_m`; os
+demais campos são derivados dessa base.
 """
 from __future__ import annotations
 
@@ -35,31 +44,21 @@ class Price:
 # Tabela hard-coded. A chave deve bater com o valor `.message.model` do
 # transcript (ex: "claude-opus-4-7", "claude-sonnet-4-6"). Sufixos como
 # "[1m]" (1M context) são removidos via `normalize_model`.
-#
-# TODO(v0.4): cruzar com endpoint /v1/models da Anthropic ao iniciar o
-# dashboard e logar discrepâncias.
+def _price_from_input(input_per_m: float) -> Price:
+    """Constrói Price aplicando os multiplicadores oficiais Anthropic."""
+    return Price(
+        input_usd_per_m=input_per_m,
+        output_usd_per_m=input_per_m * 5.0,         # 5× input
+        cache_read_usd_per_m=input_per_m * 0.1,     # 0.1× input
+        cache_write_5m_usd_per_m=input_per_m * 1.25,  # 1.25× input
+        cache_write_1h_usd_per_m=input_per_m * 2.0,   # 2× input
+    )
+
+
 PRICING: dict[str, Price] = {
-    "claude-opus-4-7": Price(
-        input_usd_per_m=15.00,
-        output_usd_per_m=75.00,
-        cache_read_usd_per_m=1.50,
-        cache_write_1h_usd_per_m=18.75,
-        cache_write_5m_usd_per_m=18.75,
-    ),
-    "claude-sonnet-4-6": Price(
-        input_usd_per_m=3.00,
-        output_usd_per_m=15.00,
-        cache_read_usd_per_m=0.30,
-        cache_write_1h_usd_per_m=3.75,
-        cache_write_5m_usd_per_m=3.75,
-    ),
-    "claude-haiku-4-5": Price(
-        input_usd_per_m=1.00,
-        output_usd_per_m=5.00,
-        cache_read_usd_per_m=0.10,
-        cache_write_1h_usd_per_m=1.25,
-        cache_write_5m_usd_per_m=1.25,
-    ),
+    "claude-opus-4-7": _price_from_input(5.00),
+    "claude-sonnet-4-6": _price_from_input(3.00),
+    "claude-haiku-4-5": _price_from_input(1.00),
 }
 
 
