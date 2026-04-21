@@ -26,20 +26,29 @@ class TestCostOf:
         assert cost_of("model-inexistente", Usage(input_tokens=1_000_000)) == 0.0
 
     def test_opus_1m_input_tokens(self) -> None:
-        # 1M input tokens @ $15/M = $15
-        assert cost_of("claude-opus-4-7", Usage(input_tokens=1_000_000)) == pytest.approx(15.0)
+        # 1M input tokens @ $5/M = $5
+        assert cost_of("claude-opus-4-7", Usage(input_tokens=1_000_000)) == pytest.approx(5.0)
 
     def test_opus_1m_output_tokens(self) -> None:
-        # 1M output tokens @ $75/M = $75
-        assert cost_of("claude-opus-4-7", Usage(output_tokens=1_000_000)) == pytest.approx(75.0)
+        # 1M output tokens @ $25/M = $25 (5× input)
+        assert cost_of("claude-opus-4-7", Usage(output_tokens=1_000_000)) == pytest.approx(25.0)
 
     def test_opus_1m_cache_read(self) -> None:
-        # 1M cache read @ $1.50/M = $1.50
-        assert cost_of("claude-opus-4-7", Usage(cache_read=1_000_000)) == pytest.approx(1.5)
+        # 1M cache read @ $0.50/M = $0.50 (0.1× input)
+        assert cost_of("claude-opus-4-7", Usage(cache_read=1_000_000)) == pytest.approx(0.5)
+
+    def test_opus_cache_write_1h_vs_5m(self) -> None:
+        # 1h cache write deve ser ~1.6× mais caro que 5m cache write
+        # (invariantes: 5m = 1.25× input, 1h = 2× input)
+        c_5m = cost_of("claude-opus-4-7", Usage(cache_creation_5m=1_000_000))
+        c_1h = cost_of("claude-opus-4-7", Usage(cache_creation_1h=1_000_000))
+        assert c_5m == pytest.approx(6.25)
+        assert c_1h == pytest.approx(10.0)
+        assert c_1h == pytest.approx(c_5m * 1.6)
 
     def test_bracket_suffix_resolves_to_opus_pricing(self) -> None:
         # Tokens do transcript vêm como "claude-opus-4-7[1m]" — precisa casar
-        assert cost_of("claude-opus-4-7[1m]", Usage(input_tokens=1_000_000)) == pytest.approx(15.0)
+        assert cost_of("claude-opus-4-7[1m]", Usage(input_tokens=1_000_000)) == pytest.approx(5.0)
 
     def test_sonnet_cheaper_than_opus(self) -> None:
         u = Usage(input_tokens=1_000_000, output_tokens=1_000_000)
@@ -56,9 +65,35 @@ class TestCostOf:
             cache_creation_1h=200_000,
             cache_read=800_000,
         )
-        # Opus: 100k*15 + 50k*75 + 200k*18.75 + 800k*1.5 all over 1M
-        expected = (100_000 * 15 + 50_000 * 75 + 200_000 * 18.75 + 800_000 * 1.5) / 1_000_000
+        # Opus (preços 2026-04): 100k*5 + 50k*25 + 200k*10 + 800k*0.5 all over 1M
+        expected = (100_000 * 5 + 50_000 * 25 + 200_000 * 10 + 800_000 * 0.5) / 1_000_000
         assert cost_of("claude-opus-4-7", u) == pytest.approx(expected)
+
+
+class TestPricingInvariants:
+    """Valida que a tabela segue os multiplicadores oficiais Anthropic."""
+
+    def test_output_is_5x_input(self) -> None:
+        for model, price in PRICING.items():
+            assert price.output_usd_per_m == pytest.approx(price.input_usd_per_m * 5), model
+
+    def test_cache_read_is_0_1x_input(self) -> None:
+        for model, price in PRICING.items():
+            assert price.cache_read_usd_per_m == pytest.approx(
+                price.input_usd_per_m * 0.1
+            ), model
+
+    def test_cache_write_5m_is_1_25x_input(self) -> None:
+        for model, price in PRICING.items():
+            assert price.cache_write_5m_usd_per_m == pytest.approx(
+                price.input_usd_per_m * 1.25
+            ), model
+
+    def test_cache_write_1h_is_2x_input(self) -> None:
+        for model, price in PRICING.items():
+            assert price.cache_write_1h_usd_per_m == pytest.approx(
+                price.input_usd_per_m * 2.0
+            ), model
 
 
 class TestUsage:
