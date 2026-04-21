@@ -30,8 +30,9 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_now()
     if args.command == "today":
-        print("TODO: view 'today' — agregado do dia (v0.2)")
-        return 0
+        from claude_dash.views.today import run as run_today
+
+        return run_today()
     if args.command == "tools":
         print("TODO: view 'tools' — breakdown de tool_use (v0.2)")
         return 0

@@ -128,6 +128,109 @@ def build_stats_for_transcript(
     return stats
 
 
+def aggregate_transcript_since(
+    ref: TranscriptRef,
+    since_ms: int,
+    live: LiveSession | None = None,
+) -> SessionStats:
+    """Agrega um transcript contando APENAS entries com timestamp >= since_ms.
+
+    Bypassa o cache porque este sempre guarda totais acumulados desde
+    o início da sessão. Para janelas de tempo (ex: "hoje"), precisamos
+    re-parsear do zero filtrando por `timestamp`. Entradas sem campo
+    `timestamp` (ex: `system`, `attachment`) não são contadas — isso é
+    intencional: usage/tools só vêm de assistant/user, que têm
+    timestamp.
+    """
+    stats = SessionStats(
+        session_id=ref.session_id,
+        cwd=live.cwd if live else Path(),
+        started_at_ms=live.started_at_ms if live else 0,
+        transcript_path=ref.path,
+    )
+
+    if live is not None:
+        stats.pid = live.pid
+        stats.alive = live.alive
+        stats.cwd = live.cwd
+        stats.version = live.version
+        if not stats.started_at_ms:
+            stats.started_at_ms = live.started_at_ms
+
+    for _offset, entry in iter_entries(ref.path):
+        ts = extract_timestamp_ms(entry)
+        # Descarta entries sem timestamp OU antes da janela
+        if ts is None or ts < since_ms:
+            continue
+        _apply_entry(entry, stats)
+
+    if not stats.last_activity_ms:
+        stats.last_activity_ms = ref.mtime_ms
+
+    return stats
+
+
+def collect_sessions_since(since_ms: int) -> list[SessionStats]:
+    """Coleta SessionStats de sessões com atividade desde `since_ms`.
+
+    Diferente de `collect_live_sessions`:
+    - Inclui sessões mortas (desde que o transcript tenha atividade no
+      período)
+    - Totais são restritos ao período (exact), não cumulativos
+    - Ordenação por última atividade (mais recente primeiro)
+
+    Subagentes são agregados apenas se também tiveram atividade no
+    período.
+    """
+    live = discover_live_sessions()
+    all_transcripts = discover_transcripts()
+    live_by_sid = {ls.session_id: ls for ls in live}
+
+    main_candidates = [
+        t for t in all_transcripts
+        if not t.is_subagent and t.mtime_ms >= since_ms
+    ]
+
+    subs_by_parent: dict[str, list[TranscriptRef]] = {}
+    for t in all_transcripts:
+        if t.is_subagent and t.parent_session_id:
+            subs_by_parent.setdefault(t.parent_session_id, []).append(t)
+
+    out: list[SessionStats] = []
+    for ref in main_candidates:
+        ls = live_by_sid.get(ref.session_id)
+        stats = aggregate_transcript_since(ref, since_ms, live=ls)
+
+        # Pre-filtra por mtime (barato) para evitar abrir arquivos
+        # claramente fora da janela — mas só conta como subagente "ativo"
+        # aquele que realmente contribuiu no período (messages ou usage),
+        # para não inflar stats.subagents em casos onde mtime foi mexido
+        # sem appends novos (touch, fs repair, etc).
+        subs_candidates = [
+            s for s in subs_by_parent.get(ref.session_id, [])
+            if s.mtime_ms >= since_ms
+        ]
+        active_subagents = 0
+        for sub_ref in subs_candidates:
+            sub_stats = aggregate_transcript_since(sub_ref, since_ms)
+            if sub_stats.messages_assistant == 0 and sub_stats.total_usage.total == 0:
+                continue
+            active_subagents += 1
+            for model, usage in sub_stats.usage_by_model.items():
+                stats.usage_by_model.setdefault(model, Usage())
+                stats.usage_by_model[model] += usage
+            for tool_name, count in sub_stats.tools.items():
+                stats.tools[tool_name] = stats.tools.get(tool_name, 0) + count
+        stats.subagents = active_subagents
+
+        # Só retorna sessões com atividade real na janela
+        if stats.total_usage.total > 0 or stats.tools or stats.messages_assistant:
+            out.append(stats)
+
+    out.sort(key=lambda s: s.last_activity_ms, reverse=True)
+    return out
+
+
 def collect_live_sessions(use_cache: bool = True) -> list[SessionStats]:
     """Coleta SessionStats de todas as sessões atualmente vivas.
 
