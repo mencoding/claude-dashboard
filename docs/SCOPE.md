@@ -192,11 +192,17 @@ claude_dashboard/
   que é custo hipotético, não cobrança
 - [x] Tool MCP `account_info` + chave `account` em `workflow_snapshot`
 
-### Futuro — Rate limits por sessão
-- [ ] Hook opcional capturando `rate_limits.five_hour`/`seven_day` do
-  JSON do statusline em `/tmp/.claude-dash-rate-limits/*.json`
-- [ ] Views e MCP exibem % consumido dos limites em vez de custo USD
-  quando `is_flat_rate=True`
+### v0.9 — Rate limits 5h/7d via hook opcional
+- [x] `claude-dash-rate-limit-capture` entrypoint (pass-through stdin)
+- [x] `rate_limits.py` lê `/tmp/claude-dash-rate-limits/*.json` com
+  freshness check (15 min) e `global_worst_case` consolidando sessões
+- [x] View `now` header: linha extra "Rate limits 5h N% ↻ · 7d N% ↻"
+  (apenas se captura existe; degradação graceful sem hook)
+- [x] Tool MCP `rate_limits()` + chave `rate_limits` em `workflow_snapshot`
+- [x] Alertas rate-limit-aware em `_infer_alerts` (5h≥85%, 7d≥85%)
+- [x] Supressão de alerta de custo USD em planos flat-rate
+- [x] Instalação documentada no README (linha adicional no statusline
+  existente; não requer reescrita)
 
 ### v0.3 — Drill-down
 - [ ] View `session <sid>`
