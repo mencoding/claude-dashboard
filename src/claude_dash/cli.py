@@ -38,8 +38,9 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_tools()
     if args.command == "session":
-        print(f"TODO: view 'session' para sid={args.sid!r} (v0.3)")
-        return 0
+        from claude_dash.views.session import run as run_session
+
+        return run_session(args.sid)
     return 2  # pragma: no cover
 
 

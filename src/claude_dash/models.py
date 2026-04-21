@@ -55,6 +55,29 @@ class ToolStat:
 
 
 @dataclass(slots=True)
+class Turn:
+    """Um turno assistant numa sessão — unidade natural para drill-down.
+
+    Diferente de `SessionStats` (agregado) ou `ToolUsageStats`
+    (cross-session), um `Turn` representa *uma* resposta do modelo:
+    tokens consumidos nessa resposta específica e tools que ela
+    disparou. A ordem dentro da sessão é dada por `index` (0-based).
+    """
+
+    index: int
+    timestamp_ms: int
+    model: str
+    usage: Usage
+    tools_called: list[str] = field(default_factory=list)
+
+    @property
+    def cost_estimate_key(self) -> str:
+        """Chave normalizada do modelo para lookup em PRICING."""
+        from claude_dash.pricing import normalize_model
+        return normalize_model(self.model)
+
+
+@dataclass(slots=True)
 class ToolUsageStats:
     """Estatísticas globais de uso de uma ferramenta numa janela temporal.
 
