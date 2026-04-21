@@ -89,15 +89,23 @@ class DashboardApp(App):
     TabPane {
         padding: 0 1;
     }
-    ListView {
-        border: solid $primary;
-        height: 100%;
-    }
     ListView > ListItem {
         padding: 0 1;
     }
+    /* Aba Session: lista limitada a 40% da altura, detail toma o resto.
+       O 'ListView { height: 100% }' anterior absorvia toda a altura e
+       deixava o drill-down invisível. */
+    #session-list {
+        border: solid $primary;
+        height: 40%;
+    }
     #session-detail {
         height: 1fr;
+        border: solid $primary;
+        overflow-y: auto;
+    }
+    #session-hint {
+        margin: 0 0 1 0;
     }
     """
 
