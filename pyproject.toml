@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-dashboard"
+version = "0.1.0.dev0"
+description = "TUI dashboard for Claude Code sessions, tokens, tools and cost"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Leonardo Menzani", email = "leonardo.menzani@gmail.com" },
+]
+license = { text = "Proprietary" }
+keywords = ["claude", "claude-code", "tui", "dashboard", "monitoring"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Monitoring",
+    "Topic :: Terminals",
+]
+dependencies = [
+    "rich>=13.7,<15",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+claude-dash = "claude_dash.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/mencoding/claude-dashboard"
+Issues = "https://github.com/mencoding/claude-dashboard/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
