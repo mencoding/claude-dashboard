@@ -89,7 +89,9 @@ def _infer_alerts(
     alerts: list[str] = []
 
     for s in live_stats:
-        # Custo por turno alto = Opus comendo muito a cada resposta
+        # Output médio por turno muito alto — proxy de "Opus gerando respostas
+        # densas" (ex: arquivos longos, loops, output repetitivo). O threshold
+        # é em tokens de OUTPUT por turno (não custo direto).
         if s.tokens_per_turn > 300_000 and s.messages_assistant > 3:
             alerts.append(
                 f"Sessão {s.session_id[:8]}… com média {int(s.tokens_per_turn):,} "
@@ -269,9 +271,12 @@ def workflow_snapshot() -> dict[str, Any]:
     - Overview de sessões ativas (contagem, custo, modelo)
     - Números do dia (tokens, custo, sessões tocadas)
     - Top tools das últimas 24h + hora de pico
-    - **Alertas**: frases acionáveis sobre sessões que podem precisar
-      atenção (custo por turno alto, sem atividade há muito tempo,
-      contexto próximo do limite)
+    - **Alertas**: frases acionáveis sobre sessões/atividade que podem
+      precisar atenção. Categorias geradas (ver `_infer_alerts`):
+      (1) output/turno alto em sessão viva,
+      (2) sessão viva sem atividade há > 30 min,
+      (3) contexto ativo > 150k tokens (perto do limite 200k),
+      (4) custo agregado do dia > \$200.
     """
     live = collect_live_sessions()
     today = collect_sessions_since(today_start_ms())
