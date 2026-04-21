@@ -55,7 +55,7 @@ class AccountInfo:
 
     @property
     def billing_label(self) -> str:
-        """String curta para exibição (ex: 'Max/flat', 'API', ...)."""
+        """String curta para exibição (ex: 'Assinatura', 'API (pay-as-you-go)')."""
         if self.billing_type == BILLING_FLAT_RATE:
             # O nome exato do plano (Max/Pro) não está no JSON local;
             # ficamos com "Assinatura" como label neutro. Se o Léo
@@ -71,7 +71,15 @@ class AccountInfo:
 def read_account_info(
     path: Path = DEFAULT_CLAUDE_JSON,
 ) -> AccountInfo | None:
-    """Lê ~/.claude.json e extrai info de conta; retorna None se ausente."""
+    """Lê ~/.claude.json e extrai info de conta.
+
+    Retorna None em três cenários (tratados silenciosamente, sem raise):
+    1. arquivo ausente no path indicado
+    2. JSON inválido (parse error) ou erro de leitura (OSError)
+    3. arquivo existe e parseia mas não tem o bloco `oauthAccount`
+
+    Callers devem checar `is None` antes de acessar campos.
+    """
     if not path.is_file():
         return None
     try:
