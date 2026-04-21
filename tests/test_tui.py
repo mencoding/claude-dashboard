@@ -70,6 +70,53 @@ def test_refresh_binding_does_not_crash() -> None:
     _run(run())
 
 
+def test_session_tab_enter_triggers_drill_down() -> None:
+    """Regressão: pressionar Enter num SessionListItem deve chamar
+    _render_session_detail com o sid correto.
+
+    Bug anterior (v0.6.0): atributo `.data` em ListItem não persistia
+    confiavelmente, então on_list_view_selected recebia None e o
+    drill-down silenciosamente não acontecia. Subclassando ListItem
+    em SessionListItem, o atributo `.sid` fica tipado e estável.
+    """
+    async def run():
+        app = DashboardApp()
+        # Substitui _render_session_detail por spy
+        called_with: list[str] = []
+
+        def spy(sid: str) -> None:
+            called_with.append(sid)
+
+        async with app.run_test() as pilot:
+            await pilot.pause(0.5)
+            app._render_session_detail = spy  # type: ignore[method-assign]
+            # Ir pra aba Session
+            await pilot.press("4")
+            await pilot.pause(0.2)
+
+            # Garante que a lista tem pelo menos 1 item (ou o teste
+            # é inerte — depende do filesystem real do ambiente de teste)
+            from claude_dash.views.tui import SessionListItem
+            from textual.widgets import ListView
+
+            list_view = app.query_one("#session-list", ListView)
+            session_items = [c for c in list_view.children if isinstance(c, SessionListItem)]
+            if not session_items:
+                return  # Ambiente sem transcripts → nada a testar
+
+            # Foca na ListView e simula Enter no primeiro item
+            list_view.focus()
+            list_view.index = 0
+            await pilot.pause(0.1)
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+
+            assert len(called_with) == 1, "drill-down não foi disparado por Enter"
+            assert called_with[0] == session_items[0].sid
+
+    _run(run())
+
+
 def test_all_tab_contents_mount_without_error() -> None:
     """Valida que os Static de conteúdo de cada aba existem após on_mount.
 
