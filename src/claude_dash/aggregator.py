@@ -10,7 +10,7 @@ from claude_dash.discover import (
     discover_live_sessions,
     discover_transcripts,
 )
-from claude_dash.models import SessionStats, Usage
+from claude_dash.models import SessionStats, ToolUsageStats, Usage
 from claude_dash.parser import (
     extract_model,
     extract_timestamp_ms,
@@ -228,6 +228,56 @@ def collect_sessions_since(since_ms: int) -> list[SessionStats]:
             out.append(stats)
 
     out.sort(key=lambda s: s.last_activity_ms, reverse=True)
+    return out
+
+
+def collect_tool_usage_since(since_ms: int) -> dict[str, ToolUsageStats]:
+    """Agrega uso de ferramentas em todos os transcripts desde `since_ms`.
+
+    Para cada transcript cujo mtime está na janela, percorre as entries
+    e registra cada `tool_use` cuja entry.timestamp >= since_ms.
+    Subagentes contribuem para a sessão-pai (transcript principal) —
+    isto preserva a narrativa de "essa sessão usou N Bashes", mesmo
+    que alguns tenham sido disparados por subagents.
+
+    A hora do histograma é a hora local do sistema.
+    """
+    from datetime import datetime
+
+    all_transcripts = discover_transcripts()
+    # mtime pre-filter + mapeamento subagent → parent para atribuição
+    relevant = [t for t in all_transcripts if t.mtime_ms >= since_ms]
+    subagent_parent: dict[str, str] = {
+        t.session_id: t.parent_session_id
+        for t in all_transcripts
+        if t.is_subagent and t.parent_session_id
+    }
+
+    out: dict[str, ToolUsageStats] = {}
+
+    for ref in relevant:
+        # Sessão contabilizada: parent se é subagent, senão a própria
+        owning_sid = (
+            subagent_parent.get(ref.session_id)
+            if ref.is_subagent
+            else ref.session_id
+        )
+        if owning_sid is None:
+            continue
+
+        for _offset, entry in iter_entries(ref.path):
+            ts = extract_timestamp_ms(entry)
+            if ts is None or ts < since_ms:
+                continue
+            hour = datetime.fromtimestamp(ts / 1000).hour
+            for tool_name in iter_tool_uses(entry):
+                stats = out.setdefault(tool_name, ToolUsageStats(name=tool_name))
+                stats.total_count += 1
+                stats.count_by_session[owning_sid] = (
+                    stats.count_by_session.get(owning_sid, 0) + 1
+                )
+                stats.hours_histogram[hour] += 1
+
     return out
 
 

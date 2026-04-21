@@ -141,7 +141,12 @@ claude_dashboard/
 ### v0.3 — Agregações históricas
 - [x] View `today` (dia corrente, filtragem **exata** por timestamp das entries)
 - [x] `aggregator.aggregate_transcript_since` / `collect_sessions_since`
-- [ ] View `tools` (últimas 24h)
+
+### v0.4 — Breakdown transversal por ferramenta
+- [x] View `tools` (últimas 24h, rolling window)
+- [x] `ToolUsageStats` (count por sessão, histograma 24h, peak hour)
+- [x] `aggregator.collect_tool_usage_since` (subagents atribuídos ao parent)
+- [x] Sparkline ASCII por tool + histograma agregado por hora
 
 ### v0.3 — Drill-down
 - [ ] View `session <sid>`

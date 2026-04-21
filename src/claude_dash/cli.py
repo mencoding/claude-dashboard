@@ -34,8 +34,9 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_today()
     if args.command == "tools":
-        print("TODO: view 'tools' — breakdown de tool_use (v0.2)")
-        return 0
+        from claude_dash.views.tools import run as run_tools
+
+        return run_tools()
     if args.command == "session":
         print(f"TODO: view 'session' para sid={args.sid!r} (v0.3)")
         return 0

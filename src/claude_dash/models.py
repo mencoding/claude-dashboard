@@ -55,6 +55,36 @@ class ToolStat:
 
 
 @dataclass(slots=True)
+class ToolUsageStats:
+    """Estatísticas globais de uso de uma ferramenta numa janela temporal.
+
+    Diferente de `ToolStat` (contagem simples), isto agrega por sessão
+    e por hora do dia, permitindo análises como "qual hora do dia
+    concentra mais invocações de Bash?" ou "em quantas sessões
+    distintas essa tool foi usada?".
+    """
+
+    name: str
+    total_count: int = 0
+    # Contagens discriminadas por sessionId (apenas transcripts
+    # principais — subagents contam para a sessão-pai)
+    count_by_session: dict[str, int] = field(default_factory=dict)
+    # Histograma: 24 buckets, um por hora local (0..23)
+    hours_histogram: list[int] = field(default_factory=lambda: [0] * 24)
+
+    @property
+    def session_count(self) -> int:
+        return len(self.count_by_session)
+
+    @property
+    def peak_hour(self) -> int | None:
+        """Hora (0..23) com mais invocações, ou None se nenhuma."""
+        if self.total_count == 0:
+            return None
+        return max(range(24), key=lambda h: self.hours_histogram[h])
+
+
+@dataclass(slots=True)
 class SessionStats:
     """Métricas agregadas de uma sessão (viva ou histórica)."""
 
