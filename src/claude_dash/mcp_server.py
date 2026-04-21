@@ -177,6 +177,9 @@ def account_info() -> dict[str, Any]:
         "organization_role": acc.organization_role,
         "billing_type": acc.billing_type,
         "billing_label": acc.billing_label,
+        "plan_label": acc.plan_label,
+        "subscription_type": acc.subscription_type,
+        "rate_limit_tier": acc.rate_limit_tier,
         "is_flat_rate": acc.is_flat_rate,
         "has_extra_usage_enabled": acc.has_extra_usage_enabled,
         "extra_usage_disabled_reason": acc.extra_usage_disabled_reason,
@@ -426,6 +429,7 @@ def workflow_snapshot() -> dict[str, Any]:
         "generated_at": datetime.now().isoformat(),
         "account": {
             "email": acc.email if acc else None,
+            "plan": acc.plan_label if acc else None,
             "billing_label": acc.billing_label if acc else None,
             "is_flat_rate": acc.is_flat_rate if acc else None,
         },

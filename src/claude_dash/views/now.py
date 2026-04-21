@@ -200,20 +200,24 @@ def _cost_label(acc: AccountInfo | None) -> str:
 
 def _account_line(acc: AccountInfo | None) -> Text:
     """Linha de info da conta, organizada em 3 campos semânticos:
-    email · billing type · status dos créditos extras.
+    email · plano (fallback: billing type) · status dos créditos extras.
 
-    Antes os 3 campos apareciam misturados ("Assinatura (extra usage
-    desabilitado: out_of_credits)"), dando a impressão de que "extra
-    usage desabilitado" era o status do plano. Agora separados com
-    nomes dos campos, cada um é claramente identificável.
+    O nome do plano (Max, Pro, etc) é lido de
+    ~/.claude/.credentials.json. Se inacessível, cai em billing_label
+    como aproximação.
     """
     line = Text()
     if acc is None:
         return line
     line.append(" Conta ", style="dim")
     line.append(f"{acc.email}", style="bold")
-    line.append("  ·  Billing: ", style="dim")
-    line.append(f"{acc.billing_label}", style="bold cyan")
+    line.append("  ·  Plano: ", style="dim")
+    plan = acc.plan_label
+    if plan == "—":
+        # Sem credentials lidas — cai em billing como aproximação
+        line.append(f"{acc.billing_label}", style="bold cyan")
+    else:
+        line.append(f"{plan}", style="bold cyan")
     line.append("  ·  Créditos extras: ", style="dim")
     # Cor do status de créditos: verde=disponível, amarelo=sem créditos,
     # dim=desabilitado.
@@ -276,11 +280,23 @@ def _rate_limit_block(snap: RateLimitSnapshot | None) -> Text:
     return out
 
 
-def _header(sessions: list[SessionStats]) -> Panel:
+def _header(
+    sessions: list[SessionStats],
+    acc: AccountInfo | None = None,
+    rl_snap: RateLimitSnapshot | None = None,
+) -> Panel:
+    """Renderiza o painel de header.
+
+    `acc` e `rl_snap` são injetados opcionalmente pelo caller (em
+    `_render`) para evitar dupla leitura de disco: o caller já
+    precisa desses valores para calcular `header_size`. Se `None`,
+    a função lê sozinha (útil para chamadas standalone/testes).
+    """
     n = len(sessions)
     total_tokens = sum(s.total_usage.total for s in sessions)
     total_cost = sum(_total_cost(s) for s in sessions)
-    acc = read_account_info()
+    if acc is None:
+        acc = read_account_info()
 
     total_usage = Usage()
     tool_totals: dict[str, int] = {}
@@ -301,7 +317,9 @@ def _header(sessions: list[SessionStats]) -> Panel:
     if len(acc_line) > 0:
         header_text.append_text(acc_line)
         header_text.append("\n")
-    rl_block = _rate_limit_block(global_worst_case())
+    if rl_snap is None:
+        rl_snap = global_worst_case()
+    rl_block = _rate_limit_block(rl_snap)
     if len(rl_block) > 0:
         header_text.append_text(rl_block)
         header_text.append("\n")
@@ -329,15 +347,18 @@ def _footer(refresh_sec: float) -> Panel:
 
 def _render(sessions: list[SessionStats], refresh_sec: float) -> Layout:
     # Header: 1 borda sup + data/stats + 1 borda inf = 3 linhas base.
-    # Linhas condicionais: +1 se tem account info, +2 se tem rate limits
-    # (bloco renderiza 2 linhas — uma para 5h, outra para 7d).
-    has_account = read_account_info() is not None
-    has_rl = global_worst_case() is not None
+    # Linhas condicionais: +1 se tem account info, +2 se tem rate limits.
+    # Fazemos UMA leitura de cada fonte aqui e injetamos em _header()
+    # para evitar dupla I/O por refresh (antes: 4 reads/2s, agora: 2).
+    acc = read_account_info()
+    rl_snap = global_worst_case()
+    has_account = acc is not None
+    has_rl = rl_snap is not None
     header_size = 3 + (1 if has_account else 0) + (2 if has_rl else 0)
 
     layout = Layout()
     layout.split_column(
-        Layout(_header(sessions), size=header_size, name="header"),
+        Layout(_header(sessions, acc=acc, rl_snap=rl_snap), size=header_size, name="header"),
         Layout(Panel(_session_table(sessions), border_style="dim", title="Sessões",
                      title_align="left"), name="body"),
         Layout(_footer(refresh_sec), size=3, name="footer"),
