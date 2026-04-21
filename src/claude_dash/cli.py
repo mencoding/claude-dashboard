@@ -1,4 +1,9 @@
-"""CLI entrypoint — dispatch dos subcomandos."""
+"""CLI entrypoint — dispatch dos subcomandos.
+
+Comportamento padrão: `claude-dash` sem argumentos abre a TUI com
+abas navegáveis (modo interativo). Os subcomandos explícitos são
+preservados para uso em scripts / pipelines.
+"""
 from __future__ import annotations
 
 import argparse
@@ -8,11 +13,13 @@ import sys
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claude-dash",
-        description="Dashboard de uso do Claude Code.",
+        description="Dashboard de uso do Claude Code. Sem args = TUI interativa.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # subcomando é opcional: sem argumento → TUI
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
-    subparsers.add_parser("now", help="TUI viva com sessões ativas")
+    subparsers.add_parser("tui", help="TUI interativa (default quando sem args)")
+    subparsers.add_parser("now", help="Snapshot estático das sessões ativas")
     subparsers.add_parser("today", help="Agregado do dia corrente")
     subparsers.add_parser("tools", help="Breakdown de tool_use nas últimas 24h")
 
@@ -24,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Default: sem argumentos ou com 'tui' → abre TUI
+    if args.command is None or args.command == "tui":
+        from claude_dash.views.tui import run as run_tui
+
+        return run_tui()
 
     if args.command == "now":
         from claude_dash.views.now import run as run_now

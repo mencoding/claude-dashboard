@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-dashboard"
-version = "0.5.0"
+version = "0.6.0.dev0"
 description = "TUI dashboard for Claude Code sessions, tokens, tools and cost"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,7 +23,8 @@ classifiers = [
     "Topic :: Terminals",
 ]
 dependencies = [
-    "rich>=13.7,<15",
+    "rich>=13.7",
+    "textual>=0.80",
 ]
 
 [project.optional-dependencies]
