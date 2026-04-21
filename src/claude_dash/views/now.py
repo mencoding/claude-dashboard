@@ -73,6 +73,31 @@ def _tools_summary(s: SessionStats, top_n: int = 4) -> str:
     return " ".join(f"{name}:{count}" for name, count in top)
 
 
+def _tokens_breakdown(s: SessionStats) -> str:
+    """Célula multi-linha: total (bold) + in/out + cache r/w + /turno.
+
+    Usa markup Rich para colorir: total em branco forte, breakdown em dim.
+    """
+    total = s.total_usage
+    per_turn = s.tokens_per_turn
+    # Soma por tipo (agregando todos os modelos da sessão + subagentes)
+    lines = [
+        f"[bold]{_fmt_tokens(total.total)}[/bold]",
+        f"[dim]in {_fmt_tokens(total.input_tokens)} / out {_fmt_tokens(total.output_tokens)}[/dim]",
+        f"[dim]cache r {_fmt_tokens(total.cache_read)} / w {_fmt_tokens(total.cache_creation_1h + total.cache_creation_5m)}[/dim]",
+        f"[dim]/turno {_fmt_tokens(int(per_turn))}[/dim]",
+    ]
+    return "\n".join(lines)
+
+
+def _context_cell(s: SessionStats) -> str:
+    """Tokens em uso no contexto ativo (último turno assistant)."""
+    ctx = s.active_context_tokens
+    if ctx == 0:
+        return "—"
+    return _fmt_tokens(ctx)
+
+
 def _session_table(sessions: list[SessionStats]) -> Table:
     table = Table(
         title=None,
@@ -86,16 +111,17 @@ def _session_table(sessions: list[SessionStats]) -> Table:
     table.add_column("SID", width=10)
     table.add_column("CWD", overflow="ellipsis")
     table.add_column("Idade", justify="right", width=8)
-    table.add_column("Modelo", width=16)
-    table.add_column("Tokens", justify="right", width=10)
+    table.add_column("Modelo", width=14)
+    table.add_column("Tokens (total / in·out / cache r·w / turno)",
+                     justify="right", width=22)
+    table.add_column("Ctx", justify="right", width=7)
     table.add_column("Custo", justify="right", width=9)
     table.add_column("Msgs", justify="right", width=10)
-    table.add_column("Subagts", justify="right", width=7)
+    table.add_column("Sub", justify="right", width=4)
     table.add_column("Tools (top 4)", overflow="fold")
 
     now_ms = int(time.time() * 1000)
     for s in sessions:
-        total_tokens = s.total_usage.total
         cost = _total_cost(s)
         age_ms = now_ms - s.started_at_ms if s.started_at_ms else 0
 
@@ -113,11 +139,13 @@ def _session_table(sessions: list[SessionStats]) -> Table:
             _fmt_short_cwd(s.cwd),
             _fmt_duration(age_ms) if age_ms else "—",
             dom_short,
-            _fmt_tokens(total_tokens),
+            _tokens_breakdown(s),
+            _context_cell(s),
             f"${cost:,.2f}",
             msgs,
             str(s.subagents),
             _tools_summary(s),
+            end_section=True,  # linha divisória entre sessões
         )
     return table
 
