@@ -23,6 +23,7 @@ from claude_dash.views.now import (
     _short_sid,
     _tools_summary,
     _total_cost,
+    colored_cost,
 )
 
 
@@ -102,7 +103,7 @@ def _session_table(sessions: list[SessionStats]) -> Panel:
             last_activity,
             dom_short,
             _fmt_tokens(total),
-            f"${cost:,.2f}",
+            colored_cost(cost),
             msgs,
             str(s.subagents),
             _tools_summary(s),
