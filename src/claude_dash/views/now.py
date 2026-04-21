@@ -155,20 +155,22 @@ def _header(sessions: list[SessionStats]) -> Panel:
     return Panel(Align.left(header_text), border_style="cyan", padding=(0, 1))
 
 
-def _footer() -> Panel:
+def _footer(refresh_sec: float) -> Panel:
+    # Formata como inteiro quando possível ("2s"), senão com 1 casa ("2.5s")
+    interval = f"{refresh_sec:g}s"
     hints = Text.from_markup(
-        "[dim]Refresh a cada 2s  •  Ctrl+C para sair[/dim]"
+        f"[dim]Refresh a cada {interval}  •  Ctrl+C para sair[/dim]"
     )
     return Panel(Align.center(hints), border_style="dim", padding=(0, 1))
 
 
-def _render(sessions: list[SessionStats]) -> Layout:
+def _render(sessions: list[SessionStats], refresh_sec: float) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(_header(sessions), size=3, name="header"),
         Layout(Panel(_session_table(sessions), border_style="dim", title="Sessões",
                      title_align="left"), name="body"),
-        Layout(_footer(), size=3, name="footer"),
+        Layout(_footer(refresh_sec), size=3, name="footer"),
     )
     return layout
 
@@ -185,7 +187,7 @@ def run(refresh_sec: float = REFRESH_SEC) -> int:
 
     try:
         with Live(
-            _render(collect_live_sessions()),
+            _render(collect_live_sessions(), refresh_sec),
             console=console,
             refresh_per_second=1 / refresh_sec,
             screen=False,
@@ -193,7 +195,7 @@ def run(refresh_sec: float = REFRESH_SEC) -> int:
             while True:
                 time.sleep(refresh_sec)
                 sessions = collect_live_sessions()
-                live.update(_render(sessions))
+                live.update(_render(sessions, refresh_sec))
     except KeyboardInterrupt:
         console.print("[dim]saindo…[/dim]")
         return 0

@@ -1,11 +1,13 @@
 """Cache incremental de agregação por transcript.
 
-O cache guarda três informações: o `mtime_ms` do transcript quando o
-estado foi gerado, o `byte_offset` até onde já parseamos e o estado
-agregado serializado. Numa releitura, se o mtime bate, lemos só os
-bytes novos; se mudou mas o arquivo não foi truncado, podemos tentar
-continuar do offset (arquivo é append-only). Se o tamanho caiu abaixo
-do offset, invalidamos tudo.
+O cache guarda quatro informações de identidade/estado: o `inode` e
+`mtime_ms` do transcript quando o estado foi gerado, o `byte_offset`
+até onde já parseamos e o estado agregado serializado. O `inode` é
+checado primeiro: se mudou, o arquivo foi recriado (truncate+rewrite
+ou renomeado) e invalidamos tudo. Se inode bate e mtime também,
+reaproveita direto. Se inode bate mas mtime mudou e `file_size >=
+byte_offset`, continua do offset (transcript é append-only). Se
+`file_size < byte_offset`, invalida.
 """
 from __future__ import annotations
 
@@ -42,11 +44,13 @@ def save(
     byte_offset: int,
     stats: SessionStats,
     cache_dir: Path = CACHE_DIR,
+    inode: int = 0,
 ) -> None:
     """Persiste o cache. Cria cache_dir se necessário."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_path_for(session_id, cache_dir)
     payload = {
+        "inode": int(inode),
         "mtime_ms": mtime_ms,
         "byte_offset": byte_offset,
         "stats": _serialize_stats(stats),

@@ -9,7 +9,6 @@ from claude_dash.discover import (
     TranscriptRef,
     discover_live_sessions,
     discover_transcripts,
-    subagents_of,
 )
 from claude_dash.models import SessionStats, Usage
 from claude_dash.parser import (
@@ -19,6 +18,7 @@ from claude_dash.parser import (
     iter_entries,
     iter_tool_uses,
 )
+from claude_dash.pricing import normalize_model
 
 
 def _apply_entry(entry: dict, stats: SessionStats) -> None:
@@ -31,7 +31,10 @@ def _apply_entry(entry: dict, stats: SessionStats) -> None:
 
     u = extract_usage(entry)
     if u is not None:
-        model = extract_model(entry) or "unknown"
+        # Chave canônica (sem sufixos [1m]/-YYYYMMDD): garante que
+        # display, cost e agregação usem o mesmo identificador.
+        raw = extract_model(entry) or "unknown"
+        model = normalize_model(raw) if raw != "unknown" else raw
         stats.usage_by_model.setdefault(model, Usage())
         stats.usage_by_model[model] += u
 
@@ -51,25 +54,41 @@ def build_stats_for_transcript(
     """Agrega estatísticas de um transcript, aproveitando cache quando possível."""
     stats: SessionStats | None = None
     start_offset = 0
+    skip_parse = False
+
+    # Inode atual + tamanho: identidade forte do arquivo para detectar
+    # truncate+rewrite (inode muda) e truncamento puro (size < offset)
+    try:
+        st = ref.path.stat()
+        file_inode = st.st_ino
+        file_size = st.st_size
+    except OSError:
+        file_inode = 0
+        file_size = 0
 
     if use_cache:
         cached = cache.load(ref.session_id)
         if cached is not None:
+            cached_inode = int(cached.get("inode") or 0)
             cached_mtime = int(cached.get("mtime_ms") or 0)
             cached_offset = int(cached.get("byte_offset") or 0)
-            file_size = ref.path.stat().st_size
-            # Validações:
-            # 1. mtime bate perfeitamente → nada mudou; reaproveita direto
-            # 2. mtime mudou mas file_size >= cached_offset → append-only;
-            #    continua do offset
-            # 3. file_size < cached_offset → arquivo truncou, invalida
-            if cached_mtime == ref.mtime_ms:
+
+            # Validações em ordem de força:
+            # 1. inode diferente → arquivo recriado; invalida tudo
+            # 2. inode igual + mtime igual → nada mudou; reaproveita
+            #    direto e pula iter_entries
+            # 3. inode igual + mtime mudou + file_size >= offset →
+            #    append-only; continua do offset
+            # 4. file_size < offset → truncamento parcial; invalida
+            inode_matches = cached_inode and cached_inode == file_inode
+            if inode_matches and cached_mtime == ref.mtime_ms:
                 stats = cache.deserialize_stats(cached["stats"])
                 start_offset = cached_offset
-            elif file_size >= cached_offset > 0:
+                skip_parse = True
+            elif inode_matches and file_size >= cached_offset > 0:
                 stats = cache.deserialize_stats(cached["stats"])
                 start_offset = cached_offset
-            # else: invalida tudo, reparseia do zero
+            # else: arquivo mudou de forma não-append-only; reparseia
 
     if stats is None:
         stats = SessionStats(
@@ -88,19 +107,20 @@ def build_stats_for_transcript(
         if not stats.started_at_ms:
             stats.started_at_ms = live.started_at_ms
 
-    # Parsing incremental dos bytes novos
+    # Parsing incremental dos bytes novos — pulado no cache hit exato
     last_offset = start_offset
-    for offset, entry in iter_entries(ref.path, start_offset=start_offset):
-        _apply_entry(entry, stats)
-        last_offset = offset
+    if not skip_parse:
+        for offset, entry in iter_entries(ref.path, start_offset=start_offset):
+            _apply_entry(entry, stats)
+            last_offset = offset
 
     # mtime do arquivo como fallback para last_activity
     if not stats.last_activity_ms:
         stats.last_activity_ms = ref.mtime_ms
 
-    # Atualiza cache (sempre; barato)
+    # Atualiza cache (sempre; barato). Inclui inode para identidade.
     if use_cache:
-        cache.save(ref.session_id, ref.mtime_ms, last_offset, stats)
+        cache.save(ref.session_id, ref.mtime_ms, last_offset, stats, inode=file_inode)
 
     return stats
 
@@ -109,10 +129,18 @@ def collect_live_sessions(use_cache: bool = True) -> list[SessionStats]:
     """Coleta SessionStats de todas as sessões atualmente vivas.
 
     Inclui o consumo de subagentes disparados por cada sessão.
+    Faz uma única varredura do filesystem e reutiliza a lista para
+    extrair tanto transcripts principais quanto subagentes.
     """
     live = discover_live_sessions()
     all_transcripts = discover_transcripts()
-    by_sid = {t.session_id: t for t in all_transcripts if not t.is_subagent}
+    by_sid: dict[str, TranscriptRef] = {}
+    subs_by_parent: dict[str, list[TranscriptRef]] = {}
+    for t in all_transcripts:
+        if t.is_subagent and t.parent_session_id:
+            subs_by_parent.setdefault(t.parent_session_id, []).append(t)
+        else:
+            by_sid[t.session_id] = t
 
     out: list[SessionStats] = []
     for ls in live:
@@ -122,8 +150,9 @@ def collect_live_sessions(use_cache: bool = True) -> list[SessionStats]:
             continue
         stats = build_stats_for_transcript(ref, live=ls, use_cache=use_cache)
 
-        # Agrega subagentes
-        subs = subagents_of(ls.session_id)
+        # Agrega subagentes reusando a lista já obtida acima — evita
+        # re-scan O(N) de projects/ por sessão viva
+        subs = subs_by_parent.get(ls.session_id, [])
         stats.subagents = len(subs)
         for sub_ref in subs:
             sub_stats = build_stats_for_transcript(sub_ref, use_cache=use_cache)
