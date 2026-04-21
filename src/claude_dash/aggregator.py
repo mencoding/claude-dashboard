@@ -201,18 +201,27 @@ def collect_sessions_since(since_ms: int) -> list[SessionStats]:
         ls = live_by_sid.get(ref.session_id)
         stats = aggregate_transcript_since(ref, since_ms, live=ls)
 
-        subs_in_window = [
+        # Pre-filtra por mtime (barato) para evitar abrir arquivos
+        # claramente fora da janela — mas só conta como subagente "ativo"
+        # aquele que realmente contribuiu no período (messages ou usage),
+        # para não inflar stats.subagents em casos onde mtime foi mexido
+        # sem appends novos (touch, fs repair, etc).
+        subs_candidates = [
             s for s in subs_by_parent.get(ref.session_id, [])
             if s.mtime_ms >= since_ms
         ]
-        stats.subagents = len(subs_in_window)
-        for sub_ref in subs_in_window:
+        active_subagents = 0
+        for sub_ref in subs_candidates:
             sub_stats = aggregate_transcript_since(sub_ref, since_ms)
+            if sub_stats.messages_assistant == 0 and sub_stats.total_usage.total == 0:
+                continue
+            active_subagents += 1
             for model, usage in sub_stats.usage_by_model.items():
                 stats.usage_by_model.setdefault(model, Usage())
                 stats.usage_by_model[model] += usage
             for tool_name, count in sub_stats.tools.items():
                 stats.tools[tool_name] = stats.tools.get(tool_name, 0) + count
+        stats.subagents = active_subagents
 
         # Só retorna sessões com atividade real na janela
         if stats.total_usage.total > 0 or stats.tools or stats.messages_assistant:

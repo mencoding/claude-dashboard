@@ -134,7 +134,11 @@ def _tools_aggregate(sessions: list[SessionStats], top_n: int = 10) -> Panel:
         )
 
     top = sorted(totals.items(), key=lambda kv: -kv[1])[:top_n]
-    total_calls = sum(count for _, count in top)
+    # Denominador é a soma de TODOS os tools, não só os exibidos — assim
+    # as porcentagens refletem share real, e a tail (tools fora do top N)
+    # "some" em forma de pct não-mostrados que fazem a soma visível
+    # ficar abaixo de 100% quando existe cauda.
+    total_calls = sum(totals.values())
 
     lines = []
     for name, count in top:
