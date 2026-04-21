@@ -55,6 +55,35 @@ claude-dash tools              # breakdown de tool_use últimas 24h
 claude-dash session <sid>      # drill-down (prefixo de sessionId aceito)
 ```
 
+### MCP server — canal para agentes
+
+A partir da v0.7, um servidor MCP expõe o estado do Claude Code como
+ferramentas consultáveis por outros agentes. Útil para meta-raciocínio:
+um agente pergunta "como está o fluxo de trabalho do usuário?" e recebe
+uma síntese com alertas sobre sessões que merecem atenção.
+
+Adicione ao `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "claude-dashboard": {
+      "command": "claude-dash-mcp"
+    }
+  }
+}
+```
+
+Ferramentas expostas:
+
+| Tool | Retorna |
+|---|---|
+| `active_sessions` | Lista detalhada de sessões vivas |
+| `today_summary` | Agregado do dia corrente |
+| `tools_breakdown(hours=24)` | Breakdown de `tool_use` no período |
+| `session_details(sid)` | Drill-down de 1 sessão |
+| `workflow_snapshot` | **Canal unificado** — resumo + alertas acionáveis |
+
 ## Instalação
 
 ```bash
