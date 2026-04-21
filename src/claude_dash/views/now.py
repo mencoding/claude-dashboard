@@ -69,8 +69,8 @@ def _total_cost(s: SessionStats) -> float:
 def colored_cost(usd: float, thresholds: tuple[float, float] = (10.0, 50.0)) -> str:
     """Formata custo em USD com cor por faixa.
 
-    Padrão: verde/dim abaixo de thresholds[0], amarelo entre, vermelho
-    acima de thresholds[1]. Argumentos:
+    Padrão: dim abaixo de thresholds[0], amarelo entre, vermelho acima
+    de thresholds[1]. Argumentos:
         thresholds[0]: limite para cor amarela ("atenção")
         thresholds[1]: limite para cor vermelha ("custo alto")
     Usado no display de sessões agregadas (`now`/`today`).
@@ -88,8 +88,9 @@ def colored_cost(usd: float, thresholds: tuple[float, float] = (10.0, 50.0)) -> 
 def colored_turn_cost(usd: float) -> str:
     """Versão com thresholds menores, apropriados para custo de um turno.
 
-    A escala por-turno é 2 ordens de grandeza menor que por-sessão:
-    $0.50/turno já é alto, $1.00/turno é caso de investigação.
+    Thresholds: ($0.50, $1.00) vs. ($10, $50) da sessão — cerca de
+    20× e 50× mais baixos, refletindo que um único turno raramente
+    aproxima do custo cumulativo de uma sessão de horas.
     """
     return colored_cost(usd, thresholds=(0.5, 1.0))
 
