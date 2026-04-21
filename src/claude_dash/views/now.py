@@ -14,6 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from claude_dash.account import AccountInfo, read_account_info
 from claude_dash.aggregator import collect_live_sessions
 from claude_dash.models import SessionStats, Usage
 from claude_dash.pricing import cost_of
@@ -179,10 +180,41 @@ def _session_table(sessions: list[SessionStats]) -> Table:
     return table
 
 
+def _cost_label(acc: AccountInfo | None) -> str:
+    """Rótulo adequado ao plano de billing do usuário.
+
+    Em assinatura flat-rate (Max/Pro), 'Custo estimado' em USD é
+    desinformação — o usuário paga mensalidade fixa. O dashboard
+    sinaliza isso com o rótulo 'Custo (ref. API)' para deixar claro
+    que é custo hipotético, não cobrança efetiva.
+    """
+    if acc is not None and acc.is_flat_rate:
+        return "Custo (ref. API)"
+    return "Custo estimado"
+
+
+def _account_line(acc: AccountInfo | None) -> Text:
+    """Linha curta com info de conta; vazio se não encontrado."""
+    line = Text()
+    if acc is None:
+        return line
+    line.append(" Conta ", style="dim")
+    line.append(f"{acc.email}", style="bold")
+    line.append(" · ", style="dim")
+    line.append(f"{acc.billing_label}", style="bold cyan")
+    if acc.has_extra_usage_enabled and acc.extra_usage_disabled_reason:
+        line.append(
+            f" (extra usage desabilitado: {acc.extra_usage_disabled_reason})",
+            style="dim yellow",
+        )
+    return line
+
+
 def _header(sessions: list[SessionStats]) -> Panel:
     n = len(sessions)
     total_tokens = sum(s.total_usage.total for s in sessions)
     total_cost = sum(_total_cost(s) for s in sessions)
+    acc = read_account_info()
 
     total_usage = Usage()
     tool_totals: dict[str, int] = {}
@@ -199,12 +231,16 @@ def _header(sessions: list[SessionStats]) -> Panel:
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     header_text = Text()
+    acc_line = _account_line(acc)
+    if len(acc_line) > 0:
+        header_text.append_text(acc_line)
+        header_text.append("\n")
     header_text.append(f" {now}  ", style="dim")
     header_text.append(f"│  Sessões vivas: ", style="dim")
     header_text.append(f"{n}", style="bold cyan")
     header_text.append(f"  │  Tokens agregados: ", style="dim")
     header_text.append(f"{_fmt_tokens(total_tokens)}", style="bold")
-    header_text.append(f"  │  Custo estimado: ", style="dim")
+    header_text.append(f"  │  {_cost_label(acc)}: ", style="dim")
     header_text.append(f"${total_cost:,.2f}", style="bold yellow")
     header_text.append(f"  │  Cache hit: ", style="dim")
     header_text.append(f"{cache_hit_pct:.1f}%", style="bold green")
@@ -224,7 +260,7 @@ def _footer(refresh_sec: float) -> Panel:
 def _render(sessions: list[SessionStats], refresh_sec: float) -> Layout:
     layout = Layout()
     layout.split_column(
-        Layout(_header(sessions), size=3, name="header"),
+        Layout(_header(sessions), size=4, name="header"),
         Layout(Panel(_session_table(sessions), border_style="dim", title="Sessões",
                      title_align="left"), name="body"),
         Layout(_footer(refresh_sec), size=3, name="footer"),

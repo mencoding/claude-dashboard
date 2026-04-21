@@ -16,7 +16,10 @@ from rich.text import Text
 from claude_dash.aggregator import collect_sessions_since
 from claude_dash.models import SessionStats
 from claude_dash.pricing import cost_of
+from claude_dash.account import read_account_info
 from claude_dash.views.now import (
+    _account_line,
+    _cost_label,
     _fmt_duration,
     _fmt_short_cwd,
     _fmt_tokens,
@@ -41,19 +44,23 @@ def _header(sessions: list[SessionStats], since_ms: int) -> Panel:
     total_msgs_asst = sum(s.messages_assistant for s in sessions)
     alive = sum(1 for s in sessions if s.alive)
     dead = len(sessions) - alive
+    acc = read_account_info()
 
     since_str = datetime.fromtimestamp(since_ms / 1000).strftime("%Y-%m-%d %H:%M")
     now_str = datetime.now().strftime("%H:%M:%S")
 
-    # Layout em 2 linhas para caber em terminais ~80 cols
     header = Text()
+    acc_line = _account_line(acc)
+    if len(acc_line) > 0:
+        header.append_text(acc_line)
+        header.append("\n")
     header.append(f" {since_str}  →  {now_str}   ", style="dim")
     header.append(f"{len(sessions)}", style="bold cyan")
     header.append(" sessões   ", style="dim")
     header.append(f"[{alive} vivas · {dead} mortas]\n", style="dim")
     header.append(f" Tokens ", style="dim")
     header.append(f"{_fmt_tokens(total_tokens)}", style="bold")
-    header.append("   Custo ", style="dim")
+    header.append(f"   {_cost_label(acc)} ", style="dim")
     header.append(f"${total_cost:,.2f}", style="bold yellow")
     header.append("   Mensagens ", style="dim")
     header.append(f"{total_msgs_user}u/{total_msgs_asst}a", style="bold")

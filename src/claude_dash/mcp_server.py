@@ -20,6 +20,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from claude_dash.account import read_account_info
 from claude_dash.aggregator import (
     build_stats_for_transcript,
     collect_live_sessions,
@@ -131,6 +132,37 @@ def _infer_alerts(
 
 
 # --- ferramentas expostas ------------------------------------------------
+
+
+@mcp.tool()
+def account_info() -> dict[str, Any]:
+    """Info da conta/assinatura do usuário no Claude Code.
+
+    Retorna email, organização, billing type ("stripe_subscription"
+    para planos Max/Pro flat-rate; "api" para pay-as-you-go),
+    flag `is_flat_rate` (útil para agentes decidirem se custo em
+    USD faz sentido), status de extra usage (pay-as-you-go adicional).
+
+    Lida de ~/.claude.json (campos oauthAccount, cachedExtraUsageDisabledReason).
+    Retorna `{"error": ...}` se não houver arquivo ou parse falhar.
+    """
+    acc = read_account_info()
+    if acc is None:
+        return {"error": "~/.claude.json ausente ou sem oauthAccount"}
+    return {
+        "email": acc.email,
+        "display_name": acc.display_name,
+        "organization_name": acc.organization_name,
+        "organization_role": acc.organization_role,
+        "billing_type": acc.billing_type,
+        "billing_label": acc.billing_label,
+        "is_flat_rate": acc.is_flat_rate,
+        "has_extra_usage_enabled": acc.has_extra_usage_enabled,
+        "extra_usage_disabled_reason": acc.extra_usage_disabled_reason,
+        "first_token_date": acc.first_token_date,
+        "account_uuid": acc.account_uuid,
+        "organization_uuid": acc.organization_uuid,
+    }
 
 
 @mcp.tool()
@@ -276,7 +308,7 @@ def workflow_snapshot() -> dict[str, Any]:
       (1) output/turno alto em sessão viva,
       (2) sessão viva sem atividade há > 30 min,
       (3) contexto ativo > 150k tokens (perto do limite 200k),
-      (4) custo agregado do dia > \$200.
+      (4) custo agregado do dia > $200.
     """
     live = collect_live_sessions()
     today = collect_sessions_since(today_start_ms())
@@ -305,8 +337,15 @@ def workflow_snapshot() -> dict[str, Any]:
             hourly[h] += count
     peak_hour = hourly.index(max(hourly)) if any(hourly) else None
 
+    acc = read_account_info()
+
     return {
         "generated_at": datetime.now().isoformat(),
+        "account": {
+            "email": acc.email if acc else None,
+            "billing_label": acc.billing_label if acc else None,
+            "is_flat_rate": acc.is_flat_rate if acc else None,
+        },
         "active": {
             "sessions_count": len(live),
             "workspaces": sorted({str(s.cwd) for s in live}),

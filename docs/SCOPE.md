@@ -177,6 +177,26 @@ claude_dashboard/
   gera **alertas** acionáveis (custo alto, contexto próximo do
   limite, sessões sem atividade)
 - [x] Integração com Claude Code via `~/.claude/settings.json`
+- [x] **v0.7.1**: fix foco ListView na aba Session
+- [x] **v0.7.2**: fix CSS — drill-down estava invisível
+- [x] **v0.7.3**: remove ●/○ ambíguo, usa texto colorido
+
+### v0.8 — Info de conta e distinção por billing
+- [x] `account.py`: lê `~/.claude.json` extraindo email, organização,
+  billing type (`stripe_subscription` = assinatura flat-rate;
+  `api` = pay-as-you-go)
+- [x] `AccountInfo.is_flat_rate` e `billing_label` para agentes
+  decidirem se custo USD é significativo
+- [x] Header de `now`/`today` passa a mostrar conta + billing; label
+  do custo vira "Custo (ref. API)" em plano flat-rate para sinalizar
+  que é custo hipotético, não cobrança
+- [x] Tool MCP `account_info` + chave `account` em `workflow_snapshot`
+
+### Futuro — Rate limits por sessão
+- [ ] Hook opcional capturando `rate_limits.five_hour`/`seven_day` do
+  JSON do statusline em `/tmp/.claude-dash-rate-limits/*.json`
+- [ ] Views e MCP exibem % consumido dos limites em vez de custo USD
+  quando `is_flat_rate=True`
 
 ### v0.3 — Drill-down
 - [ ] View `session <sid>`
