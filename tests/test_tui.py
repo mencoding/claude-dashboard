@@ -71,11 +71,13 @@ def test_refresh_binding_does_not_crash() -> None:
 
 
 def test_all_tab_contents_mount_without_error() -> None:
-    """Valida que os 4 Static de conteúdo foram criados e query_one encontra-os.
+    """Valida que os Static de conteúdo de cada aba existem após on_mount.
 
-    Na prática isto confirma que on_mount → _refresh_{now,today,tools}
-    e _refresh_session_list rodaram sem levantar exceção (se levantassem,
-    o app teria crashado antes do query_one funcionar).
+    Se `on_mount` (que invoca `_refresh_{now,today,tools}`) tivesse
+    crashado, o app não chegaria num estado onde query_one retorna os
+    widgets — então a ausência de exceção aqui implica que os refreshers
+    principais rodaram. A ListView da aba Session é checada
+    separadamente em outros testes via press/ select.
     """
     async def run():
         app = DashboardApp()

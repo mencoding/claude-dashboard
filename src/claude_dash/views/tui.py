@@ -116,12 +116,19 @@ class DashboardApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Renderização inicial + timer de auto-refresh da Now."""
+        """Renderiza as 4 abas no mount e agenda auto-refresh só da Now.
+
+        Render inicial cobre todas as abas para o usuário poder trocar
+        sem ver tela vazia. Já o timer periódico dispara apenas
+        `_refresh_now()` porque é a única aba "ao vivo"; as demais são
+        snapshots (recomputá-las a cada 2s seria custoso — today/tools
+        re-parseiam transcripts inteiros).
+        """
         self._refresh_now()
         self._refresh_today()
         self._refresh_tools()
         self._refresh_session_list()
-        # Auto-refresh da Now a cada NOW_REFRESH_SEC segundos
+        # Auto-refresh só da Now (demais via `r` manual)
         self.set_interval(NOW_REFRESH_SEC, self._refresh_now)
 
     # ----- Actions -------------------------------------------------------

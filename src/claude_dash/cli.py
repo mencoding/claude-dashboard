@@ -18,10 +18,10 @@ def build_parser() -> argparse.ArgumentParser:
     # subcomando é opcional: sem argumento → TUI
     subparsers = parser.add_subparsers(dest="command", required=False)
 
-    subparsers.add_parser("tui", help="TUI interativa (default quando sem args)")
-    subparsers.add_parser("now", help="Snapshot estático das sessões ativas")
-    subparsers.add_parser("today", help="Agregado do dia corrente")
-    subparsers.add_parser("tools", help="Breakdown de tool_use nas últimas 24h")
+    subparsers.add_parser("tui", help="TUI interativa com abas (default quando sem args)")
+    subparsers.add_parser("now", help="Live TUI das sessões ativas (refresh 2s)")
+    subparsers.add_parser("today", help="Snapshot do dia corrente (estático)")
+    subparsers.add_parser("tools", help="Snapshot de tool_use nas últimas 24h (estático)")
 
     session_p = subparsers.add_parser("session", help="Drill-down de uma sessão")
     session_p.add_argument("sid", help="sessionId (prefixo aceito)")

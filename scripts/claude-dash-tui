@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # claude-dash-tui — abre a TUI do dashboard em uma janela nova de terminal.
 #
-# Detecta o emulador disponível (em ordem de preferência configurável via
-# $CLAUDE_DASH_TERMINAL) e dispara o comando. Projetado para ser invocado
-# de launcher desktop, atalho de teclado do WM ou linha de comando.
+# Detecta o emulador disponível em ordem: $CLAUDE_DASH_TERMINAL, $TERMINAL,
+# gnome-terminal, kitty, alacritty, konsole, xfce4-terminal, terminator,
+# tilix, x-terminal-emulator, xterm. Cada emulador tem sintaxe própria
+# para executar comando + título — o case abaixo trata cada um.
+# Projetado para ser invocado de launcher desktop, atalho de teclado do WM
+# ou linha de comando.
 #
 # Uso:
 #   claude-dash-tui                  # abre em terminal novo, detectado
