@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-dashboard"
-version = "0.10.0"
+version = "0.11.0"
 description = "TUI dashboard for Claude Code sessions, tokens, tools and cost"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,6 +37,7 @@ dev = [
 [project.scripts]
 claude-dash = "claude_dash.cli:main"
 claude-dash-mcp = "claude_dash.mcp_server:main"
+claude-dash-statusline = "claude_dash.statusline:main"
 claude-dash-rate-limit-capture = "claude_dash.rate_limit_capture:main"
 
 [project.urls]

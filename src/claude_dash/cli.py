@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     session_p = subparsers.add_parser("session", help="Drill-down de uma sessão")
     session_p.add_argument("sid", help="sessionId (prefixo aceito)")
 
+    subparsers.add_parser(
+        "setup-status",
+        help="Configura claude-dash-statusline como statusLine em settings.json "
+             "(idempotente, preserva statusline anterior via wrap)",
+    )
+
     return parser
 
 
@@ -54,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
         from claude_dash.views.session import run as run_session
 
         return run_session(args.sid)
+    if args.command == "setup-status":
+        from claude_dash.setup_status import main as run_setup
+
+        return run_setup()
     return 2  # pragma: no cover
 
 

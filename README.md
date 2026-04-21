@@ -55,27 +55,39 @@ claude-dash tools              # breakdown de tool_use últimas 24h
 claude-dash session <sid>      # drill-down (prefixo de sessionId aceito)
 ```
 
-### Rate limits 5h/7d (hook opcional)
+### Rate limits 5h/7d (via statusline próprio — v0.11+)
 
-Desde v0.9, o dashboard pode exibir o consumo real dos rate limits da
-conta (5h e 7d) — especialmente útil em planos flat-rate (Max/Pro),
-onde o custo em USD é hipotético e o que importa é **quanto do limite
-já foi usado**.
+Desde **v0.11**, o dashboard possui seu próprio statusline
+(`claude-dash-statusline`) que produz a mesma linha visual do script
+bash original E captura os rate_limits automaticamente em `/tmp/` para
+as views consumirem.
 
-O Claude Code só injeta `rate_limits` no JSON do statusline — por
-isso a captura requer uma linha extra no seu script de statusline
-(`settings.json:statusLine.command`). Instalação:
+**Instalação em 1 comando (idempotente):**
 
-1. Identifique o script configurado em `~/.claude/settings.json:statusLine.command`.
-2. Adicione no **topo** do seu script (depois do `input=$(cat)`):
-   ```bash
-   echo "$input" | claude-dash-rate-limit-capture > /dev/null
-   ```
-3. Reinicie a sessão do Claude Code. A cada render do statusline,
-   o snapshot de rate limits é gravado em `/tmp/claude-dash-rate-limits/`.
+```bash
+claude-dash setup-status
+```
 
-Sem o hook instalado, o dashboard continua funcional — apenas omite a
-linha de rate limits no header. Graceful degradation.
+Esse comando:
+- Faz backup do `~/.claude/settings.json`
+- Registra `claude-dash-statusline` como `statusLine.command`
+- Se você já tinha um statusline configurado, preserva o path dele em
+  `~/.claude/.claude-dash.json` como `statusline_wrap_path` — o
+  statusline próprio então executa o seu script original para gerar o
+  output visual (mantém aparência), mas ainda captura rate_limits.
+
+Depois de rodar o setup, reinicie uma sessão do Claude Code. A partir
+daí, o header da TUI passa a exibir as barras de 5h/7d.
+
+**Para remover:** edite `~/.claude/settings.json` e restaure a partir
+do backup em `~/.claude/backups/settings.json.backup.*`.
+
+**Modo manual (pré-v0.11, ainda funciona):** você pode adicionar uma
+linha no seu statusline existente com `echo "$input" | claude-dash-rate-limit-capture > /dev/null`.
+O entrypoint de captura foi preservado por compatibilidade.
+
+Sem nenhuma das formas acima, o dashboard continua funcional — apenas
+omite a linha de rate limits no header. Graceful degradation.
 
 ### MCP server — canal para agentes
 
