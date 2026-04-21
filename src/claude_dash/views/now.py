@@ -199,50 +199,81 @@ def _cost_label(acc: AccountInfo | None) -> str:
 
 
 def _account_line(acc: AccountInfo | None) -> Text:
-    """Linha curta com info de conta; vazio se não encontrado."""
+    """Linha de info da conta, organizada em 3 campos semânticos:
+    email · billing type · status dos créditos extras.
+
+    Antes os 3 campos apareciam misturados ("Assinatura (extra usage
+    desabilitado: out_of_credits)"), dando a impressão de que "extra
+    usage desabilitado" era o status do plano. Agora separados com
+    nomes dos campos, cada um é claramente identificável.
+    """
     line = Text()
     if acc is None:
         return line
     line.append(" Conta ", style="dim")
     line.append(f"{acc.email}", style="bold")
-    line.append(" · ", style="dim")
+    line.append("  ·  Billing: ", style="dim")
     line.append(f"{acc.billing_label}", style="bold cyan")
-    if acc.has_extra_usage_enabled and acc.extra_usage_disabled_reason:
-        line.append(
-            f" (extra usage desabilitado: {acc.extra_usage_disabled_reason})",
-            style="dim yellow",
-        )
+    line.append("  ·  Créditos extras: ", style="dim")
+    # Cor do status de créditos: verde=disponível, amarelo=sem créditos,
+    # dim=desabilitado.
+    label = acc.extra_usage_label
+    if "disponível" in label:
+        style = "bold green"
+    elif "sem créditos" in label or "bloqueado" in label:
+        style = "bold yellow"
+    else:
+        style = "dim"
+    line.append(label, style=style)
     return line
 
 
-def _rate_limit_line(snap: RateLimitSnapshot | None) -> Text:
-    """Linha com consumo 5h/7d da conta; vazia se não há captura.
+def _rate_limit_bar(pct: float, width: int = 14) -> str:
+    """Barra ASCII estilo progresso, proporcional ao percentual.
 
-    Só aparece quando o hook opcional `claude-dash-rate-limit-capture`
-    está instalado. Sem captura, a linha é omitida (graceful degradation).
+    Exemplo para pct=42, width=14:
+        '[█████░░░░░░░░]'
     """
-    line = Text()
+    pct = max(0.0, min(100.0, pct))
+    filled = int(round(pct / 100 * width))
+    empty = width - filled
+    return "[" + "█" * filled + "░" * empty + "]"
+
+
+def _rate_limit_block(snap: RateLimitSnapshot | None) -> Text:
+    """Bloco de 2 linhas exibindo consumo 5h e 7d da conta.
+
+    Layout (cada janela em uma linha):
+        Janela 5h  [██░░░░░░░░░░░░]  13%   reseta em 3h48m
+        Janela 7d  [███░░░░░░░░░░░]  18%   reseta em 6d 1h
+
+    Vazio se não há captura fresca (graceful degradation).
+    """
+    out = Text()
     if snap is None or not snap.is_fresh:
-        return line
-    line.append(" Rate limits ", style="dim")
-    # 5h
-    pct5 = snap.five_hour_pct
-    color5 = "bold red" if pct5 >= 85 else "bold yellow" if pct5 >= 60 else "bold"
-    line.append("5h ", style="dim")
-    line.append(f"{pct5:.0f}%", style=color5)
-    delta5 = format_reset_delta(snap.five_hour_resets_in_seconds)
-    if delta5:
-        line.append(f" ↻{delta5}", style="dim")
-    line.append("   ", style="dim")
-    # 7d
-    pct7 = snap.seven_day_pct
-    color7 = "bold red" if pct7 >= 85 else "bold yellow" if pct7 >= 60 else "bold"
-    line.append("7d ", style="dim")
-    line.append(f"{pct7:.0f}%", style=color7)
-    delta7 = format_reset_delta(snap.seven_day_resets_in_seconds)
-    if delta7:
-        line.append(f" ↻{delta7}", style="dim")
-    return line
+        return out
+
+    for label, pct, resets_in_s in (
+        ("Janela 5h", snap.five_hour_pct, snap.five_hour_resets_in_seconds),
+        ("Janela 7d", snap.seven_day_pct, snap.seven_day_resets_in_seconds),
+    ):
+        color = (
+            "bold red" if pct >= 85
+            else "bold yellow" if pct >= 60
+            else "bold green"
+        )
+        out.append(f" {label}  ", style="dim")
+        out.append(_rate_limit_bar(pct), style=color)
+        out.append(f"  {pct:5.1f}%", style=color)
+        delta = format_reset_delta(resets_in_s)
+        if delta:
+            out.append(f"   reseta em {delta}", style="dim")
+        out.append("\n")
+
+    # Remove o último \n para não adicionar linha vazia no header
+    if out.plain.endswith("\n"):
+        out = out[:-1]
+    return out
 
 
 def _header(sessions: list[SessionStats]) -> Panel:
@@ -270,9 +301,9 @@ def _header(sessions: list[SessionStats]) -> Panel:
     if len(acc_line) > 0:
         header_text.append_text(acc_line)
         header_text.append("\n")
-    rl_line = _rate_limit_line(global_worst_case())
-    if len(rl_line) > 0:
-        header_text.append_text(rl_line)
+    rl_block = _rate_limit_block(global_worst_case())
+    if len(rl_block) > 0:
+        header_text.append_text(rl_block)
         header_text.append("\n")
     header_text.append(f" {now}  ", style="dim")
     header_text.append(f"│  Sessões vivas: ", style="dim")
@@ -298,10 +329,11 @@ def _footer(refresh_sec: float) -> Panel:
 
 def _render(sessions: list[SessionStats], refresh_sec: float) -> Layout:
     # Header: 1 borda sup + data/stats + 1 borda inf = 3 linhas base.
-    # Linhas condicionais: +1 se tem account info, +1 se tem rate limits.
+    # Linhas condicionais: +1 se tem account info, +2 se tem rate limits
+    # (bloco renderiza 2 linhas — uma para 5h, outra para 7d).
     has_account = read_account_info() is not None
     has_rl = global_worst_case() is not None
-    header_size = 3 + (1 if has_account else 0) + (1 if has_rl else 0)
+    header_size = 3 + (1 if has_account else 0) + (2 if has_rl else 0)
 
     layout = Layout()
     layout.split_column(
