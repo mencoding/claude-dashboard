@@ -154,6 +154,16 @@ claude_dashboard/
 - [x] `aggregator.extract_turns` — um Turn por entrada assistant com usage
 - [x] Timeline tail (últimos 20 turnos com custo estimado por turno)
 - [x] Painel de subagentes com custo individual
+- [x] **Release v0.5.0 tagged** (polish: pricing validado, cores por faixa)
+
+### v0.6 — Modo TUI interativo
+- [x] `claude-dash` sem argumentos → abre app Textual com abas
+- [x] 4 abas: Now, Today, Tools, Session (keyboard 1-4 ou ←/→)
+- [x] Now com auto-refresh 2s, demais com refresh manual (`r`)
+- [x] Session tab com `ListView` de SIDs (vivos + do dia)
+- [x] `scripts/claude-dash-tui` — launcher bash abre terminal novo
+  (detecta gnome-terminal, kitty, alacritty, konsole, xterm, etc.)
+- [x] Subcomandos explícitos preservados para uso scriptável
 
 ### v0.3 — Drill-down
 - [ ] View `session <sid>`

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# claude-dash-tui — abre a TUI do dashboard em uma janela nova de terminal.
+#
+# Detecta o emulador disponível em ordem: $CLAUDE_DASH_TERMINAL, $TERMINAL,
+# gnome-terminal, kitty, alacritty, konsole, xfce4-terminal, terminator,
+# tilix, x-terminal-emulator, xterm. Cada emulador tem sintaxe própria
+# para executar comando + título — o case abaixo trata cada um.
+# Projetado para ser invocado de launcher desktop, atalho de teclado do WM
+# ou linha de comando.
+#
+# Uso:
+#   claude-dash-tui                  # abre em terminal novo, detectado
+#   CLAUDE_DASH_TERMINAL=kitty ...   # força um emulador específico
+set -euo pipefail
+
+CMD="claude-dash"
+TITLE="claude-dashboard"
+
+# Prioridade: env var explícita > $TERMINAL > lista conhecida
+CANDIDATES=()
+if [[ -n "${CLAUDE_DASH_TERMINAL:-}" ]]; then
+    CANDIDATES+=("$CLAUDE_DASH_TERMINAL")
+fi
+if [[ -n "${TERMINAL:-}" ]]; then
+    CANDIDATES+=("$TERMINAL")
+fi
+CANDIDATES+=(
+    gnome-terminal
+    kitty
+    alacritty
+    konsole
+    xfce4-terminal
+    terminator
+    tilix
+    x-terminal-emulator
+    xterm
+)
+
+# Encontra o primeiro binário disponível
+TERM_BIN=""
+for t in "${CANDIDATES[@]}"; do
+    if command -v "$t" >/dev/null 2>&1; then
+        TERM_BIN="$t"
+        break
+    fi
+done
+
+if [[ -z "$TERM_BIN" ]]; then
+    echo "claude-dash-tui: nenhum emulador de terminal conhecido foi encontrado." >&2
+    echo "Configure CLAUDE_DASH_TERMINAL=<seu-terminal> e tente novamente." >&2
+    exit 127
+fi
+
+# Cada emulador tem sintaxe própria para "executar comando e manter aberto"
+case "$(basename "$TERM_BIN")" in
+    gnome-terminal)
+        exec "$TERM_BIN" --title="$TITLE" -- "$CMD"
+        ;;
+    kitty)
+        exec "$TERM_BIN" --title "$TITLE" "$CMD"
+        ;;
+    alacritty)
+        exec "$TERM_BIN" --title "$TITLE" -e "$CMD"
+        ;;
+    konsole)
+        exec "$TERM_BIN" --title "$TITLE" -e "$CMD"
+        ;;
+    xfce4-terminal)
+        exec "$TERM_BIN" --title="$TITLE" --command="$CMD"
+        ;;
+    terminator)
+        exec "$TERM_BIN" --title "$TITLE" -x "$CMD"
+        ;;
+    tilix)
+        exec "$TERM_BIN" --title="$TITLE" -e "$CMD"
+        ;;
+    x-terminal-emulator|xterm)
+        exec "$TERM_BIN" -T "$TITLE" -e "$CMD"
+        ;;
+    *)
+        # Fallback genérico: -e COMANDO (funciona na maioria)
+        exec "$TERM_BIN" -e "$CMD"
+        ;;
+esac
