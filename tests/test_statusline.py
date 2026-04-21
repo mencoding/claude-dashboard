@@ -159,6 +159,28 @@ class TestWrapResolution:
         assert statusline._resolve_wrap_path() is None
 
 
+class TestRunWrap:
+    def test_expands_tilde_in_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regressão: se wrap_path começa com '~/', expandir antes de execv.
+
+        Review do PR #18 pegou este bug — o Claude Code aceita '~'
+        no settings.json:statusLine.command, então quando preservamos
+        esse valor como wrap_path, subprocess.run precisa expandir.
+        Sem este fix, wrap silenciosamente não executa.
+        """
+        # Cria um script executável em tmp_path
+        script = tmp_path / "meu-statusline.sh"
+        script.write_text("#!/bin/sh\necho 'wrapped output'\n")
+        script.chmod(0o755)
+        # Simula cenário em que o path foi salvo como ~/ e HOME é tmp_path
+        monkeypatch.setenv("HOME", str(tmp_path))
+        tilde_path = "~/meu-statusline.sh"
+        result = statusline._run_wrap(tilde_path, "{}")
+        assert result == "wrapped output"
+
+
 class TestSetupStatus:
     def _patch_paths(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

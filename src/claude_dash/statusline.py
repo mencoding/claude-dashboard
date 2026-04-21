@@ -234,10 +234,18 @@ def _resolve_wrap_path() -> str | None:
 
 
 def _run_wrap(wrap_path: str, raw_input: str) -> str | None:
-    """Executa wrap script com raw_input via stdin; retorna stdout ou None em falha."""
+    """Executa wrap script com raw_input via stdin; retorna stdout ou None em falha.
+
+    Expande `~` no path antes de executar. O Claude Code aceita
+    `"command": "~/.claude/script.sh"` em settings.json e resolve o
+    til no próprio harness; quando preservamos esse path como
+    wrap_path, o execv NÃO expande — resultaria em FileNotFoundError
+    e fallback silencioso para o renderer próprio.
+    """
+    expanded = os.path.expanduser(wrap_path)
     try:
         result = subprocess.run(
-            [wrap_path],
+            [expanded],
             input=raw_input,
             capture_output=True,
             text=True,
