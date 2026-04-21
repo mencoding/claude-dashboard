@@ -71,6 +71,11 @@ class SessionStats:
     messages_user: int = 0
     messages_assistant: int = 0
     subagents: int = 0                    # número de transcripts filhos
+    # Snapshot do `message.usage` da ÚLTIMA entrada assistant vista.
+    # Aproxima o "contexto ativo" da sessão agora — o que o harness do
+    # Claude Code envia como input na próxima chamada (input_tokens +
+    # cache_read_input_tokens) é o tamanho real do contexto em uso.
+    last_usage: Usage | None = None
 
     @property
     def total_usage(self) -> Usage:
@@ -88,3 +93,26 @@ class SessionStats:
             self.usage_by_model.items(),
             key=lambda kv: kv[1].output_tokens,
         )[0]
+
+    @property
+    def active_context_tokens(self) -> int:
+        """Tamanho aproximado do contexto ativo: input + cache_read do último turno.
+
+        O harness envia, a cada chamada, `input_tokens` novos + todos os
+        tokens de `cache_read` (reaproveitados). Esse somatório
+        representa o tamanho efetivo do prompt que o modelo recebe —
+        ou seja, o contexto em uso. Entradas de cache_creation contam
+        como parte do prompt quando escritas, mas como leitura em
+        turnos seguintes; usar cache_read+input cobre o caso estável.
+        """
+        if self.last_usage is None:
+            return 0
+        return self.last_usage.input_tokens + self.last_usage.cache_read
+
+    @property
+    def tokens_per_turn(self) -> float:
+        """Output médio por mensagem assistant (0 se não houver msgs)."""
+        if self.messages_assistant == 0:
+            return 0.0
+        total_out = sum(u.output_tokens for u in self.usage_by_model.values())
+        return total_out / self.messages_assistant

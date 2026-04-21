@@ -133,7 +133,10 @@ claude_dashboard/
 - [ ] View `now` com `rich.Live`
 - [ ] Entrypoint CLI
 
-### v0.2 — Agregações históricas
+### v0.2 — Enriquecimento da view 'now' e agregações históricas
+- [x] Tokens discriminados na tabela (total / in·out / cache r·w / turno)
+- [x] Coluna `Ctx` com tokens do contexto ativo (último turno assistant)
+- [x] `SessionStats.last_usage`, `active_context_tokens`, `tokens_per_turn`
 - [ ] View `today`
 - [ ] View `tools`
 

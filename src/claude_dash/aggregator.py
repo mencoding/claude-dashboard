@@ -37,6 +37,9 @@ def _apply_entry(entry: dict, stats: SessionStats) -> None:
         model = normalize_model(raw) if raw != "unknown" else raw
         stats.usage_by_model.setdefault(model, Usage())
         stats.usage_by_model[model] += u
+        # last_usage = snapshot do turno mais recente (não acumulado);
+        # útil para inferir o tamanho atual do contexto ativo.
+        stats.last_usage = u
 
     for tool_name in iter_tool_uses(entry):
         stats.tools[tool_name] = stats.tools.get(tool_name, 0) + 1

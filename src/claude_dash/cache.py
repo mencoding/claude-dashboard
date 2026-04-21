@@ -78,6 +78,8 @@ def deserialize_stats(d: dict) -> SessionStats:
         for model, u_dict in (d.get("usage_by_model") or {}).items()
     }
     transcript_path = d.get("transcript_path")
+    last_usage_dict = d.get("last_usage")
+    last_usage = Usage(**last_usage_dict) if last_usage_dict else None
     return SessionStats(
         session_id=d["session_id"],
         cwd=Path(d.get("cwd") or ""),
@@ -92,6 +94,7 @@ def deserialize_stats(d: dict) -> SessionStats:
         messages_user=int(d.get("messages_user") or 0),
         messages_assistant=int(d.get("messages_assistant") or 0),
         subagents=int(d.get("subagents") or 0),
+        last_usage=last_usage,
     )
 
 

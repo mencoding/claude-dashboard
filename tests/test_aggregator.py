@@ -245,3 +245,76 @@ def test_collect_live_sessions_single_scan(
     result = aggregator.collect_live_sessions(use_cache=False)
     assert result == []
     assert scan_count["n"] == 1
+
+
+def test_last_usage_tracks_most_recent_assistant(
+    tmp_path: Path, isolated_cache: Path
+) -> None:
+    """last_usage deve ser snapshot da última assistant entry — não acumulado."""
+    entries = [
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"input_tokens": 10, "cache_read_input_tokens": 100}}},
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"input_tokens": 20, "cache_read_input_tokens": 5000}}},
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"input_tokens": 3, "cache_read_input_tokens": 7777}}},
+    ]
+    ref = _make_transcript(tmp_path, entries)
+    stats = build_stats_for_transcript(ref, use_cache=False)
+    assert stats.last_usage is not None
+    # Snapshot do último turno (não soma dos três)
+    assert stats.last_usage.input_tokens == 3
+    assert stats.last_usage.cache_read == 7777
+    # Contexto ativo = input + cache_read do último turno
+    assert stats.active_context_tokens == 3 + 7777
+
+
+def test_last_usage_is_none_without_assistant(
+    tmp_path: Path, isolated_cache: Path
+) -> None:
+    """Sem entrada assistant, last_usage fica None e context=0."""
+    entries = [{"type": "user"}, {"type": "system"}]
+    ref = _make_transcript(tmp_path, entries)
+    stats = build_stats_for_transcript(ref, use_cache=False)
+    assert stats.last_usage is None
+    assert stats.active_context_tokens == 0
+
+
+def test_tokens_per_turn(tmp_path: Path, isolated_cache: Path) -> None:
+    """tokens_per_turn = total_output / messages_assistant."""
+    entries = [
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"output_tokens": 100}}},
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"output_tokens": 400}}},
+    ]
+    ref = _make_transcript(tmp_path, entries)
+    stats = build_stats_for_transcript(ref, use_cache=False)
+    # (100 + 400) / 2 = 250
+    assert stats.tokens_per_turn == 250.0
+
+
+def test_tokens_per_turn_zero_when_no_assistant(
+    tmp_path: Path, isolated_cache: Path
+) -> None:
+    entries = [{"type": "user"}]
+    ref = _make_transcript(tmp_path, entries)
+    stats = build_stats_for_transcript(ref, use_cache=False)
+    assert stats.tokens_per_turn == 0.0
+
+
+def test_last_usage_survives_cache_roundtrip(
+    tmp_path: Path, isolated_cache: Path
+) -> None:
+    """Após save+load do cache, last_usage deve ser preservado."""
+    entries = [
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"input_tokens": 42, "cache_read_input_tokens": 999}}},
+    ]
+    ref = _make_transcript(tmp_path, entries)
+    build_stats_for_transcript(ref, use_cache=True)
+    # Segunda chamada: carrega do cache
+    stats2 = build_stats_for_transcript(ref, use_cache=True)
+    assert stats2.last_usage is not None
+    assert stats2.last_usage.input_tokens == 42
+    assert stats2.last_usage.cache_read == 999
