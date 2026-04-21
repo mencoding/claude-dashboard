@@ -11,11 +11,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 
 DEFAULT_CLAUDE_JSON = Path(os.environ.get("CLAUDE_JSON", Path.home() / ".claude.json"))
+DEFAULT_CREDENTIALS_JSON = Path(os.environ.get(
+    "CLAUDE_CREDENTIALS",
+    Path.home() / ".claude" / ".credentials.json",
+))
 
 
 # Valores observados no campo `billingType` do oauthAccount.
@@ -41,6 +46,10 @@ class AccountInfo:
     first_token_date: str | None        # primeira vez que usou
     account_uuid: str
     organization_uuid: str
+    # Campos lidos de ~/.claude/.credentials.json (claudeAiOauth). Vazios
+    # se arquivo não acessível (permissão) ou sem bloco claudeAiOauth.
+    subscription_type: str = ""         # ex: "max", "pro", "team"
+    rate_limit_tier: str = ""           # ex: "default_claude_max_5x"
 
     @property
     def is_flat_rate(self) -> bool:
@@ -57,10 +66,9 @@ class AccountInfo:
     def billing_label(self) -> str:
         """Label do **tipo de cobrança** (Stripe / API / Enterprise).
 
-        Nota importante: o Claude Code **não expõe o nome do plano**
-        (Pro, Max, Team, etc) em `~/.claude.json`. Esse dado só viria
-        via call autenticada à API da Anthropic. Aqui retornamos o
-        tipo de cobrança, que é o dado disponível localmente.
+        Nota: este é o *tipo de cobrança* (como o usuário paga).
+        O **nome do plano** (Pro, Max, Team) vem de `plan_label`,
+        lido de `~/.claude/.credentials.json:claudeAiOauth`.
         """
         if self.billing_type == BILLING_FLAT_RATE:
             return "Assinatura (Stripe)"
@@ -69,6 +77,30 @@ class AccountInfo:
         if self.billing_type == BILLING_ENTERPRISE:
             return "Enterprise"
         return f"Billing desconhecido ({self.billing_type})"
+
+    @property
+    def plan_label(self) -> str:
+        """Nome amigável do plano, combinando `subscription_type` +
+        variante detectada em `rate_limit_tier`.
+
+        Exemplos de retorno:
+            'Max 5×'   (subscription=max, tier=default_claude_max_5x)
+            'Max 20×'  (subscription=max, tier=default_claude_max_20x)
+            'Pro'      (subscription=pro)
+            '—'        (credentials inacessível — fallback seguro)
+
+        Se os campos não estão disponíveis (arquivo sem permissão,
+        ausente ou sem bloco claudeAiOauth), retorna '—' e o caller
+        pode optar por `billing_label` como alternativa.
+        """
+        if not self.subscription_type:
+            return "—"
+        name = self.subscription_type.capitalize()  # "max" → "Max"
+        # Detecta variante numérica no tier (ex: 5x, 20x)
+        match = re.search(r"_(\d+)x$", self.rate_limit_tier or "")
+        if match:
+            return f"{name} {match.group(1)}×"
+        return name
 
     @property
     def extra_usage_label(self) -> str:
@@ -103,17 +135,46 @@ class AccountInfo:
         return "habilitado, disponível"
 
 
+def _read_credentials(
+    path: Path = DEFAULT_CREDENTIALS_JSON,
+) -> tuple[str, str]:
+    """Lê subscriptionType e rateLimitTier de ~/.claude/.credentials.json.
+
+    Retorna ('', '') se arquivo inacessível (permissão negada,
+    ausente, JSON inválido ou sem bloco claudeAiOauth). Os campos
+    ficam vazios e `plan_label` cai em '—'.
+
+    Importante: `.credentials.json` tem permissão 0600 por design
+    (contém refresh tokens). Este módulo só **lê** os campos
+    não-sensíveis (tipo de plano e tier), nunca os tokens.
+    """
+    if not path.is_file():
+        return "", ""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, PermissionError):
+        return "", ""
+    oauth = data.get("claudeAiOauth") or {}
+    return (
+        str(oauth.get("subscriptionType") or ""),
+        str(oauth.get("rateLimitTier") or ""),
+    )
+
+
 def read_account_info(
     path: Path = DEFAULT_CLAUDE_JSON,
+    credentials_path: Path = DEFAULT_CREDENTIALS_JSON,
 ) -> AccountInfo | None:
-    """Lê ~/.claude.json e extrai info de conta.
+    """Lê ~/.claude.json + ~/.claude/.credentials.json e monta AccountInfo.
 
     Retorna None em três cenários (tratados silenciosamente, sem raise):
-    1. arquivo ausente no path indicado
+    1. claude.json ausente no path indicado
     2. JSON inválido (parse error) ou erro de leitura (OSError)
     3. arquivo existe e parseia mas não tem o bloco `oauthAccount`
 
-    Callers devem checar `is None` antes de acessar campos.
+    O credentials.json é opcional — se não acessível, os campos
+    `subscription_type` e `rate_limit_tier` ficam vazios e
+    `plan_label` retorna '—'. AccountInfo é retornada mesmo assim.
     """
     if not path.is_file():
         return None
@@ -126,6 +187,8 @@ def read_account_info(
     if not oauth:
         return None
 
+    subscription_type, rate_limit_tier = _read_credentials(credentials_path)
+
     return AccountInfo(
         email=oauth.get("emailAddress") or "",
         display_name=oauth.get("displayName") or "",
@@ -137,4 +200,6 @@ def read_account_info(
         first_token_date=data.get("claudeCodeFirstTokenDate"),
         account_uuid=oauth.get("accountUuid") or "",
         organization_uuid=oauth.get("organizationUuid") or "",
+        subscription_type=subscription_type,
+        rate_limit_tier=rate_limit_tier,
     )

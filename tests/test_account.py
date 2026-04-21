@@ -100,6 +100,78 @@ def test_extra_usage_label_available() -> None:
     assert acc.extra_usage_label == "habilitado, disponível"
 
 
+class TestPlanLabel:
+    def _acc(self, sub_type: str = "", tier: str = "") -> AccountInfo:
+        return AccountInfo(
+            email="", display_name="", organization_name="",
+            organization_role="", billing_type=BILLING_FLAT_RATE,
+            has_extra_usage_enabled=False, extra_usage_disabled_reason=None,
+            first_token_date=None, account_uuid="", organization_uuid="",
+            subscription_type=sub_type, rate_limit_tier=tier,
+        )
+
+    def test_max_with_5x_variant(self) -> None:
+        acc = self._acc("max", "default_claude_max_5x")
+        assert acc.plan_label == "Max 5×"
+
+    def test_max_with_20x_variant(self) -> None:
+        acc = self._acc("max", "default_claude_max_20x")
+        assert acc.plan_label == "Max 20×"
+
+    def test_pro_without_variant(self) -> None:
+        acc = self._acc("pro", "default_claude_pro")
+        assert acc.plan_label == "Pro"
+
+    def test_empty_when_credentials_unavailable(self) -> None:
+        acc = self._acc("", "")
+        assert acc.plan_label == "—"
+
+    def test_only_sub_without_tier(self) -> None:
+        acc = self._acc("team", "")
+        assert acc.plan_label == "Team"
+
+
+def test_read_credentials_fills_subscription_and_tier(tmp_path: Path) -> None:
+    from claude_dash.account import read_account_info
+
+    claude_json = tmp_path / "claude.json"
+    claude_json.write_text(json.dumps({
+        "oauthAccount": {
+            "emailAddress": "x@y.com",
+            "billingType": BILLING_FLAT_RATE,
+        },
+    }))
+    creds = tmp_path / "credentials.json"
+    creds.write_text(json.dumps({
+        "claudeAiOauth": {
+            "accessToken": "secret-REDACTED",
+            "subscriptionType": "max",
+            "rateLimitTier": "default_claude_max_5x",
+        },
+    }))
+    acc = read_account_info(claude_json, creds)
+    assert acc is not None
+    assert acc.subscription_type == "max"
+    assert acc.rate_limit_tier == "default_claude_max_5x"
+    assert acc.plan_label == "Max 5×"
+
+
+def test_read_credentials_missing_file_falls_back_gracefully(tmp_path: Path) -> None:
+    from claude_dash.account import read_account_info
+
+    claude_json = tmp_path / "claude.json"
+    claude_json.write_text(json.dumps({
+        "oauthAccount": {
+            "emailAddress": "x@y.com",
+            "billingType": BILLING_FLAT_RATE,
+        },
+    }))
+    acc = read_account_info(claude_json, tmp_path / "nao-existe.json")
+    assert acc is not None
+    assert acc.subscription_type == ""
+    assert acc.plan_label == "—"
+
+
 def test_extra_usage_label_unknown_reason_passthrough() -> None:
     """Reason desconhecido é exibido literalmente (não quebra display)."""
     acc = AccountInfo(

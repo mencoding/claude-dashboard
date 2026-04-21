@@ -200,20 +200,24 @@ def _cost_label(acc: AccountInfo | None) -> str:
 
 def _account_line(acc: AccountInfo | None) -> Text:
     """Linha de info da conta, organizada em 3 campos semânticos:
-    email · billing type · status dos créditos extras.
+    email · plano (fallback: billing type) · status dos créditos extras.
 
-    Antes os 3 campos apareciam misturados ("Assinatura (extra usage
-    desabilitado: out_of_credits)"), dando a impressão de que "extra
-    usage desabilitado" era o status do plano. Agora separados com
-    nomes dos campos, cada um é claramente identificável.
+    O nome do plano (Max, Pro, etc) é lido de
+    ~/.claude/.credentials.json. Se inacessível, cai em billing_label
+    como aproximação.
     """
     line = Text()
     if acc is None:
         return line
     line.append(" Conta ", style="dim")
     line.append(f"{acc.email}", style="bold")
-    line.append("  ·  Billing: ", style="dim")
-    line.append(f"{acc.billing_label}", style="bold cyan")
+    line.append("  ·  Plano: ", style="dim")
+    plan = acc.plan_label
+    if plan == "—":
+        # Sem credentials lidas — cai em billing como aproximação
+        line.append(f"{acc.billing_label}", style="bold cyan")
+    else:
+        line.append(f"{plan}", style="bold cyan")
     line.append("  ·  Créditos extras: ", style="dim")
     # Cor do status de créditos: verde=disponível, amarelo=sem créditos,
     # dim=desabilitado.
