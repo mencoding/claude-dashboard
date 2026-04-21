@@ -55,17 +55,52 @@ class AccountInfo:
 
     @property
     def billing_label(self) -> str:
-        """String curta para exibição (ex: 'Assinatura', 'API (pay-as-you-go)')."""
+        """Label do **tipo de cobrança** (Stripe / API / Enterprise).
+
+        Nota importante: o Claude Code **não expõe o nome do plano**
+        (Pro, Max, Team, etc) em `~/.claude.json`. Esse dado só viria
+        via call autenticada à API da Anthropic. Aqui retornamos o
+        tipo de cobrança, que é o dado disponível localmente.
+        """
         if self.billing_type == BILLING_FLAT_RATE:
-            # O nome exato do plano (Max/Pro) não está no JSON local;
-            # ficamos com "Assinatura" como label neutro. Se o Léo
-            # quiser diferenciar depois, podemos buscar via API.
-            return "Assinatura"
+            return "Assinatura (Stripe)"
         if self.billing_type == BILLING_API:
             return "API (pay-as-you-go)"
         if self.billing_type == BILLING_ENTERPRISE:
             return "Enterprise"
-        return f"Desconhecido ({self.billing_type})"
+        return f"Billing desconhecido ({self.billing_type})"
+
+    @property
+    def extra_usage_label(self) -> str:
+        """Status do pay-as-you-go adicional (créditos extras).
+
+        Retorna uma descrição compacta combinando capability
+        (`has_extra_usage_enabled`) com o runtime status
+        (`extra_usage_disabled_reason`). Estes são dois campos
+        ortogonais:
+        - capability = conta está inscrita no programa pay-as-you-go
+        - runtime reason = motivo pelo qual NÃO está disponível agora
+          (ex: sem saldo, bloqueio temporário)
+
+        Exemplos de retorno:
+            'habilitado, sem créditos no momento'
+            'habilitado, disponível'
+            'desabilitado'
+        """
+        if not self.has_extra_usage_enabled:
+            return "desabilitado"
+        if self.extra_usage_disabled_reason:
+            # Traduz códigos comuns para PT-BR
+            reason = {
+                "out_of_credits": "sem créditos no momento",
+                "billing_issue": "problema de cobrança",
+                "exceeded_limit": "limite de gastos excedido",
+            }.get(
+                self.extra_usage_disabled_reason,
+                self.extra_usage_disabled_reason,
+            )
+            return f"habilitado, {reason}"
+        return "habilitado, disponível"
 
 
 def read_account_info(

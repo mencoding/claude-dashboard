@@ -52,7 +52,8 @@ def test_is_flat_rate_true_for_stripe_subscription() -> None:
         first_token_date=None, account_uuid="", organization_uuid="",
     )
     assert acc.is_flat_rate is True
-    assert acc.billing_label == "Assinatura"
+    # billing_label agora indica tipo de cobrança (Stripe), não o plano
+    assert acc.billing_label == "Assinatura (Stripe)"
 
 
 def test_is_flat_rate_false_for_api() -> None:
@@ -64,6 +65,51 @@ def test_is_flat_rate_false_for_api() -> None:
     )
     assert acc.is_flat_rate is False
     assert "API" in acc.billing_label
+
+
+def test_extra_usage_label_disabled() -> None:
+    acc = AccountInfo(
+        email="", display_name="", organization_name="",
+        organization_role="", billing_type=BILLING_FLAT_RATE,
+        has_extra_usage_enabled=False, extra_usage_disabled_reason=None,
+        first_token_date=None, account_uuid="", organization_uuid="",
+    )
+    assert acc.extra_usage_label == "desabilitado"
+
+
+def test_extra_usage_label_out_of_credits() -> None:
+    acc = AccountInfo(
+        email="", display_name="", organization_name="",
+        organization_role="", billing_type=BILLING_FLAT_RATE,
+        has_extra_usage_enabled=True,
+        extra_usage_disabled_reason="out_of_credits",
+        first_token_date=None, account_uuid="", organization_uuid="",
+    )
+    label = acc.extra_usage_label
+    assert "habilitado" in label
+    assert "sem créditos" in label
+
+
+def test_extra_usage_label_available() -> None:
+    acc = AccountInfo(
+        email="", display_name="", organization_name="",
+        organization_role="", billing_type=BILLING_FLAT_RATE,
+        has_extra_usage_enabled=True, extra_usage_disabled_reason=None,
+        first_token_date=None, account_uuid="", organization_uuid="",
+    )
+    assert acc.extra_usage_label == "habilitado, disponível"
+
+
+def test_extra_usage_label_unknown_reason_passthrough() -> None:
+    """Reason desconhecido é exibido literalmente (não quebra display)."""
+    acc = AccountInfo(
+        email="", display_name="", organization_name="",
+        organization_role="", billing_type=BILLING_FLAT_RATE,
+        has_extra_usage_enabled=True,
+        extra_usage_disabled_reason="new_unknown_reason_2028",
+        first_token_date=None, account_uuid="", organization_uuid="",
+    )
+    assert "new_unknown_reason_2028" in acc.extra_usage_label
 
 
 def test_read_returns_none_when_file_missing(tmp_path: Path) -> None:
