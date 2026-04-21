@@ -26,6 +26,19 @@ from textual.widgets import (
     TabPane,
 )
 
+
+class SessionListItem(ListItem):
+    """ListItem que carrega o sessionId como atributo tipado.
+
+    Subclassar é mais robusto que atribuir `.data` depois de criado:
+    evita depender de Textual preservar atributos arbitrários entre
+    versões e dá type-safety no event handler.
+    """
+
+    def __init__(self, sid: str, label: str) -> None:
+        super().__init__(Label(label))
+        self.sid = sid
+
 from claude_dash.aggregator import (
     build_stats_for_transcript,
     collect_live_sessions,
@@ -225,9 +238,7 @@ class DashboardApp(App):
             return
 
         for sid, label in entries:
-            item = ListItem(Label(label))
-            item.data = sid  # type: ignore[attr-defined]
-            list_view.append(item)
+            list_view.append(SessionListItem(sid=sid, label=label))
 
     def _render_session_detail(self, sid: str) -> None:
         """Chamado quando o usuário seleciona um SID na lista."""
@@ -266,9 +277,9 @@ class DashboardApp(App):
     # ----- Event handlers ------------------------------------------------
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        sid = getattr(event.item, "data", None)
-        if isinstance(sid, str):
-            self._render_session_detail(sid)
+        # Usuário pressionou Enter (ou clicou) numa linha da lista
+        if isinstance(event.item, SessionListItem):
+            self._render_session_detail(event.item.sid)
 
 
 def run() -> int:
