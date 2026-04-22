@@ -162,21 +162,35 @@ class TestResetsInSeconds:
         assert 3590 <= snap.five_hour_resets_in_seconds <= 3600
 
 
+@pytest.fixture
+def settings_ok(tmp_path: Path) -> Path:
+    """Arquivo settings.json com statusLine configurado (estado saudável)."""
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({
+        "statusLine": {"type": "command", "command": "claude-dash-statusline"}
+    }))
+    return p
+
+
 class TestDescribeUnavailable:
     """Cobre o helper que explica por que global_worst_case retorna None."""
 
-    def test_directory_missing(self, tmp_path: Path) -> None:
-        reason = describe_unavailable(capture_dir=tmp_path / "nao-existe")
+    def test_directory_missing(self, tmp_path: Path, settings_ok: Path) -> None:
+        reason = describe_unavailable(
+            capture_dir=tmp_path / "nao-existe", settings_path=settings_ok
+        )
         assert reason is not None
         assert "setup-status" in reason
 
-    def test_directory_empty(self, cap_dir: Path) -> None:
+    def test_directory_empty(self, cap_dir: Path, settings_ok: Path) -> None:
         cap_dir.mkdir()
-        reason = describe_unavailable(capture_dir=cap_dir)
+        reason = describe_unavailable(
+            capture_dir=cap_dir, settings_path=settings_ok
+        )
         assert reason is not None
         assert "1º turno" in reason
 
-    def test_all_snapshots_stale(self, cap_dir: Path) -> None:
+    def test_all_snapshots_stale(self, cap_dir: Path, settings_ok: Path) -> None:
         # Captura um snapshot e então o envelhece manualmente para >15 min.
         capture_from_json(_sample_statusline_json(sid="old"), cap_dir)
         stale_path = cap_dir / "old.json"
@@ -184,12 +198,51 @@ class TestDescribeUnavailable:
         data["captured_at_ms"] = int(time.time() * 1000) - 30 * 60 * 1000
         stale_path.write_text(json.dumps(data))
 
-        reason = describe_unavailable(capture_dir=cap_dir)
+        reason = describe_unavailable(
+            capture_dir=cap_dir, settings_path=settings_ok
+        )
         assert reason is not None
         assert "15 min" in reason
 
     def test_returns_none_when_fresh_snapshot_exists(
-        self, cap_dir: Path
+        self, cap_dir: Path, settings_ok: Path
     ) -> None:
         capture_from_json(_sample_statusline_json(sid="fresh"), cap_dir)
-        assert describe_unavailable(capture_dir=cap_dir) is None
+        assert (
+            describe_unavailable(capture_dir=cap_dir, settings_path=settings_ok)
+            is None
+        )
+
+    def test_statusline_not_registered_trumps_stale_data(
+        self, cap_dir: Path, tmp_path: Path
+    ) -> None:
+        """Se settings.json não tem statusLine, mensagem aponta o setup faltando.
+
+        Regressão do caso encontrado em 2026-04-22: sync.sh cross-device
+        sobrescreveu settings.json e apagou o `statusLine`. O dashboard
+        mostrava "sessão ociosa" mesmo com o snapshot legado pré-sync —
+        mensagem enganosa, porque esperar não ajudava.
+        """
+        # Snapshot fresco existe
+        capture_from_json(_sample_statusline_json(sid="fresh"), cap_dir)
+        # Mas settings.json não tem statusLine
+        settings = tmp_path / "settings-sem-statusline.json"
+        settings.write_text(json.dumps({"hooks": {}, "language": "Brasileiro"}))
+
+        reason = describe_unavailable(
+            capture_dir=cap_dir, settings_path=settings
+        )
+        assert reason is not None
+        assert "statusLine" in reason
+        assert "setup-status" in reason
+
+    def test_missing_settings_file_is_treated_as_not_registered(
+        self, cap_dir: Path, tmp_path: Path
+    ) -> None:
+        capture_from_json(_sample_statusline_json(sid="fresh"), cap_dir)
+        reason = describe_unavailable(
+            capture_dir=cap_dir,
+            settings_path=tmp_path / "nao-existe.json",
+        )
+        assert reason is not None
+        assert "statusLine" in reason

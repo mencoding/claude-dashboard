@@ -21,6 +21,9 @@ from claude_dash.rate_limit_capture import CAPTURE_DIR
 # número provavelmente está desatualizado (sessão idle ou terminada).
 FRESHNESS_MS = 15 * 60 * 1000
 
+# Onde o harness do Claude Code guarda a config do statusLine.
+CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+
 
 @dataclass(slots=True)
 class RateLimitSnapshot:
@@ -140,14 +143,39 @@ def global_worst_case(
     )
 
 
-def describe_unavailable(capture_dir: Path = CAPTURE_DIR) -> str | None:
+def _statusline_registered(settings_path: Path = CLAUDE_SETTINGS_PATH) -> bool:
+    """True se `~/.claude/settings.json` tem `statusLine` configurado.
+
+    Se o arquivo some, é ilegível, ou o campo é ausente/null, retorna
+    False — o harness não vai invocar ninguém nesses casos e nenhum
+    snapshot novo será gerado.
+    """
+    try:
+        data = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(data.get("statusLine"))
+
+
+def describe_unavailable(
+    capture_dir: Path = CAPTURE_DIR,
+    settings_path: Path = CLAUDE_SETTINGS_PATH,
+) -> str | None:
     """Explica por que `global_worst_case` retornou None.
 
-    Discrimina três estados silenciosos para que a UI possa dar feedback
-    em vez de omitir as barras sem explicação. Retorna None quando há
+    Discrimina estados silenciosos para que a UI possa dar feedback em
+    vez de omitir as barras sem explicação. Retorna None quando há
     pelo menos um snapshot fresco (caso em que `global_worst_case`
     retornaria não-None).
+
+    Ordem dos checks importa: se o statusLine não está registrado, todas
+    as outras mensagens são enganosas ("aguardando 1º turno" sugere que
+    basta esperar, quando na verdade o harness nunca vai invocar nada).
     """
+    if not _statusline_registered(settings_path):
+        return (
+            "Rate limits: statusLine não registrado — rode `claude-dash setup-status`"
+        )
     if not capture_dir.is_dir():
         return (
             "Rate limits não capturados — rode `claude-dash setup-status`"
