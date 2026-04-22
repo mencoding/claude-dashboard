@@ -98,7 +98,12 @@ práticas:
 
 Desde **v0.11.2**, quando a barra está indisponível o header mostra
 uma linha `dim` explicando o estado exato (aguardando 1º turno /
-sessão ociosa / setup-status não rodado), em vez de silenciar.
+sessão ociosa / setup-status não rodado), em vez de silenciar. A
+**v0.11.3** adiciona detecção explícita de `statusLine` ausente em
+`~/.claude/settings.json` — útil quando um sync cross-device ou um
+editor externo sobrescreve a config e remove o registro; a mensagem
+orienta rodar `setup-status` de novo em vez de deixar o usuário no
+escuro.
 
 **Para remover:** edite `~/.claude/settings.json` e restaure a partir
 do backup em `~/.claude/backups/settings.json.backup.*`.
@@ -193,6 +198,12 @@ sem reinstalar.
 **v0.11.x** — projeto funcionalmente maduro para uso diário.
 Entregas principais por versão:
 
+- **v0.11.3** — detecção explícita de `statusLine` ausente em
+  `~/.claude/settings.json` (robustez contra sync cross-device que
+  sobrescreve a config sem preservar o registro).
+- **v0.11.2** — mensagem `dim` no header explicando estados em que
+  as barras de rate-limit não podem ser renderizadas, em vez de
+  silenciar.
 - **v0.11** — statusline próprio (`claude-dash-statusline`) com wrap
   do statusline anterior + setup em 1 comando
   (`claude-dash setup-status`).
