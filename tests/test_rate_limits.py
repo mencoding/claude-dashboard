@@ -9,6 +9,7 @@ import pytest
 
 from claude_dash.rate_limit_capture import capture_from_json
 from claude_dash.rate_limits import (
+    describe_unavailable,
     format_reset_delta,
     global_worst_case,
     read_all,
@@ -159,3 +160,36 @@ class TestResetsInSeconds:
         assert snap is not None
         # Tolerância: 3600 ± 5 segundos (round-trip via timestamps)
         assert 3590 <= snap.five_hour_resets_in_seconds <= 3600
+
+
+class TestDescribeUnavailable:
+    """Cobre o helper que explica por que global_worst_case retorna None."""
+
+    def test_directory_missing(self, tmp_path: Path) -> None:
+        reason = describe_unavailable(capture_dir=tmp_path / "nao-existe")
+        assert reason is not None
+        assert "setup-status" in reason
+
+    def test_directory_empty(self, cap_dir: Path) -> None:
+        cap_dir.mkdir()
+        reason = describe_unavailable(capture_dir=cap_dir)
+        assert reason is not None
+        assert "1º turno" in reason
+
+    def test_all_snapshots_stale(self, cap_dir: Path) -> None:
+        # Captura um snapshot e então o envelhece manualmente para >15 min.
+        capture_from_json(_sample_statusline_json(sid="old"), cap_dir)
+        stale_path = cap_dir / "old.json"
+        data = json.loads(stale_path.read_text())
+        data["captured_at_ms"] = int(time.time() * 1000) - 30 * 60 * 1000
+        stale_path.write_text(json.dumps(data))
+
+        reason = describe_unavailable(capture_dir=cap_dir)
+        assert reason is not None
+        assert "15 min" in reason
+
+    def test_returns_none_when_fresh_snapshot_exists(
+        self, cap_dir: Path
+    ) -> None:
+        capture_from_json(_sample_statusline_json(sid="fresh"), cap_dir)
+        assert describe_unavailable(capture_dir=cap_dir) is None

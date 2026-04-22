@@ -81,3 +81,15 @@ class TestRateLimitBlock:
         assert "reseta em" in block
         assert "1h15m" in block
         assert "3d0h" in block
+
+    def test_fallback_reason_rendered_when_snap_none(self) -> None:
+        """Dado snap=None e fallback_reason fornecido, renderiza a razão
+        em estilo dim em vez de silenciar (UX v0.11.2)."""
+        block = _rate_limit_block(None, fallback_reason="aguardando 1º turno")
+        assert "aguardando 1º turno" in block.plain
+
+    def test_no_fallback_keeps_legacy_silent_behavior(self) -> None:
+        """Sem fallback_reason, snap=None continua produzindo Text vazio —
+        preserva compatibilidade com callers que não adotaram o
+        novo parâmetro."""
+        assert len(_rate_limit_block(None).plain) == 0
