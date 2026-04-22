@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from rich.align import Align
-from rich.console import Console, Group
+from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
@@ -20,10 +20,10 @@ from claude_dash.models import SessionStats, Usage
 from claude_dash.pricing import cost_of
 from claude_dash.rate_limits import (
     RateLimitSnapshot,
+    describe_unavailable,
     format_reset_delta,
     global_worst_case,
 )
-
 
 REFRESH_SEC = 2.0
 
@@ -244,17 +244,26 @@ def _rate_limit_bar(pct: float, width: int = 14) -> str:
     return "[" + "█" * filled + "░" * empty + "]"
 
 
-def _rate_limit_block(snap: RateLimitSnapshot | None) -> Text:
+def _rate_limit_block(
+    snap: RateLimitSnapshot | None,
+    fallback_reason: str | None = None,
+) -> Text:
     """Bloco de 2 linhas exibindo consumo 5h e 7d da conta.
 
     Layout (cada janela em uma linha):
         Janela 5h  [██░░░░░░░░░░░░]  13%   reseta em 3h48m
         Janela 7d  [███░░░░░░░░░░░]  18%   reseta em 6d 1h
 
-    Vazio se não há captura fresca (graceful degradation).
+    Quando não há captura fresca, renderiza `fallback_reason` em estilo
+    dim (se fornecido) — dá feedback ao usuário em vez de silenciar o
+    bloco. Se nem snapshot nem fallback houver, retorna Text vazio
+    (graceful degradation para callers que preferem o comportamento
+    antigo).
     """
     out = Text()
     if snap is None or not snap.is_fresh:
+        if fallback_reason:
+            out.append(f" {fallback_reason}", style="dim")
         return out
 
     for label, pct, resets_in_s in (
@@ -319,18 +328,19 @@ def _header(
         header_text.append("\n")
     if rl_snap is None:
         rl_snap = global_worst_case()
-    rl_block = _rate_limit_block(rl_snap)
+    fallback_reason = describe_unavailable() if rl_snap is None else None
+    rl_block = _rate_limit_block(rl_snap, fallback_reason=fallback_reason)
     if len(rl_block) > 0:
         header_text.append_text(rl_block)
         header_text.append("\n")
     header_text.append(f" {now}  ", style="dim")
-    header_text.append(f"│  Sessões vivas: ", style="dim")
+    header_text.append("│  Sessões vivas: ", style="dim")
     header_text.append(f"{n}", style="bold cyan")
-    header_text.append(f"  │  Tokens agregados: ", style="dim")
+    header_text.append("  │  Tokens agregados: ", style="dim")
     header_text.append(f"{_fmt_tokens(total_tokens)}", style="bold")
     header_text.append(f"  │  {_cost_label(acc)}: ", style="dim")
     header_text.append(f"${total_cost:,.2f}", style="bold yellow")
-    header_text.append(f"  │  Cache hit: ", style="dim")
+    header_text.append("  │  Cache hit: ", style="dim")
     header_text.append(f"{cache_hit_pct:.1f}%", style="bold green")
 
     return Panel(Align.left(header_text), border_style="cyan", padding=(0, 1))
@@ -371,7 +381,7 @@ def run(refresh_sec: float = REFRESH_SEC) -> int:
     console = Console()
 
     # Ctrl+C sai limpo
-    def _on_sigint(_sig: int, _frame) -> None:  # noqa: ANN001
+    def _on_sigint(_sig: int, _frame) -> None:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, _on_sigint)

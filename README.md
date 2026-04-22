@@ -79,6 +79,27 @@ Esse comando:
 Depois de rodar o setup, reinicie uma sessão do Claude Code. A partir
 daí, o header da TUI passa a exibir as barras de 5h/7d.
 
+#### Quando as barras aparecem — dependência cronológica
+
+A captura acontece **a cada turno de interação** do Claude Code (o
+harness invoca o statusline após cada mensagem). Consequências
+práticas:
+
+1. **Sessão recém-iniciada:** entre `setup-status` e o primeiro turno,
+   não há snapshot ainda — as barras ficam ausentes. A partir da 1ª
+   resposta do Claude na sessão, passam a exibir.
+2. **Sessão ociosa por mais de 15 min:** snapshots são considerados
+   "stale" após 15 minutos (`FRESHNESS_MS` em `rate_limits.py`).
+   Sessão parada por 16+ min temporariamente perde a barra até a
+   próxima interação.
+3. **Múltiplas sessões:** rate limits são por conta, não por sessão.
+   O dashboard exibe o "pior caso" entre todas as sessões com
+   snapshot fresco.
+
+Desde **v0.11.2**, quando a barra está indisponível o header mostra
+uma linha `dim` explicando o estado exato (aguardando 1º turno /
+sessão ociosa / setup-status não rodado), em vez de silenciar.
+
 **Para remover:** edite `~/.claude/settings.json` e restaure a partir
 do backup em `~/.claude/backups/settings.json.backup.*`.
 

@@ -16,7 +16,6 @@ from pathlib import Path
 
 from claude_dash.rate_limit_capture import CAPTURE_DIR
 
-
 # Quanto tempo um snapshot é considerado "fresco". Claude Code atualiza
 # o statusline a cada interação — se passa de 15 min sem update, o
 # número provavelmente está desatualizado (sessão idle ou terminada).
@@ -66,7 +65,7 @@ def _parse_snapshot(data: dict) -> RateLimitSnapshot | None:
         return None
 
     # `resets_at` no JSON do Claude Code vem em epoch SEGUNDOS
-    def _to_ms(val) -> int:  # noqa: ANN001
+    def _to_ms(val) -> int:
         if val is None:
             return 0
         try:
@@ -139,6 +138,26 @@ def global_worst_case(
         fresh,
         key=lambda s: (max(s.five_hour_pct, s.seven_day_pct), s.captured_at_ms),
     )
+
+
+def describe_unavailable(capture_dir: Path = CAPTURE_DIR) -> str | None:
+    """Explica por que `global_worst_case` retornou None.
+
+    Discrimina três estados silenciosos para que a UI possa dar feedback
+    em vez de omitir as barras sem explicação. Retorna None quando há
+    pelo menos um snapshot fresco (caso em que `global_worst_case`
+    retornaria não-None).
+    """
+    if not capture_dir.is_dir():
+        return (
+            "Rate limits não capturados — rode `claude-dash setup-status`"
+        )
+    all_snaps = read_all(capture_dir)
+    if not all_snaps:
+        return "Rate limits: aguardando 1º turno do Claude Code"
+    if not any(s.is_fresh for s in all_snaps.values()):
+        return "Rate limits: última captura há mais de 15 min (sessão ociosa)"
+    return None
 
 
 def format_reset_delta(seconds: int) -> str:
