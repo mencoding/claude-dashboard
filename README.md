@@ -96,17 +96,19 @@ ferramentas consultáveis por outros agentes. Útil para meta-raciocínio:
 um agente pergunta "como está o fluxo de trabalho do usuário?" e recebe
 uma síntese com alertas sobre sessões que merecem atenção.
 
-Adicione ao `~/.claude/settings.json`:
+Registre o servidor via CLI do Claude Code (grava em `~/.claude.json`):
 
-```json
-{
-  "mcpServers": {
-    "claude-dashboard": {
-      "command": "claude-dash-mcp"
-    }
-  }
-}
+```bash
+claude mcp add --scope user claude-dashboard claude-dash-mcp
 ```
+
+O flag `--scope user` torna o MCP disponível em **qualquer** sessão
+do Claude Code neste dispositivo. Sem a flag, o registro fica
+limitado ao projeto do diretório corrente. Verifique o health check
+com `claude mcp list` — a entrada `claude-dashboard` deve aparecer
+com `✓ Connected`.
+
+Para remover: `claude mcp remove claude-dashboard`.
 
 Ferramentas expostas:
 
@@ -122,10 +124,40 @@ Ferramentas expostas:
 
 ## Instalação
 
+### Pré-requisitos de sistema
+
+- Python ≥ 3.12 (`python3 --version`)
+- `pipx` (Debian/Ubuntu: `sudo apt install pipx`; outras distros:
+  conforme o gerenciador de pacotes)
+
+### Usuário final (recomendado — venv isolado via pipx)
+
+```bash
+pipx install ~/Desenvolvimento/claude-dashboard
+```
+
+Isso cria um venv dedicado em
+`~/.local/share/pipx/venvs/claude-dashboard/` e expõe os entrypoints
+`claude-dash`, `claude-dash-mcp`, `claude-dash-statusline` e
+`claude-dash-rate-limit-capture` em `~/.local/bin/`.
+
+Atualizações após `git pull`:
+
+```bash
+pipx install --force ~/Desenvolvimento/claude-dashboard
+```
+
+Remoção: `pipx uninstall claude-dashboard`.
+
+### Desenvolvedor (editable)
+
 ```bash
 cd ~/Desenvolvimento/claude-dashboard
 pip install --user --break-system-packages -e .
 ```
+
+Modo editable (`-e`) faz o CLI refletir alterações do código-fonte
+sem reinstalar.
 
 ## Stack
 
@@ -137,9 +169,23 @@ pip install --user --break-system-packages -e .
 
 ## Status
 
-**v0.6.0.dev** — todas as 4 views implementadas (`now`, `today`,
-`tools`, `session`) mais o modo TUI interativo com abas. Ver
-`docs/SCOPE.md` para escopo, decisões técnicas e roadmap.
+**v0.11.x** — projeto funcionalmente maduro para uso diário.
+Entregas principais por versão:
+
+- **v0.11** — statusline próprio (`claude-dash-statusline`) com wrap
+  do statusline anterior + setup em 1 comando
+  (`claude-dash setup-status`).
+- **v0.10** — detecção de plano real (Max/Pro/Team) via
+  `credentials.json`.
+- **v0.9** — hook opcional de rate-limits 5h/7d.
+- **v0.8** — `account_info` (conta, organização, billing type).
+- **v0.7** — servidor MCP com 7 tools (`active_sessions`,
+  `today_summary`, `tools_breakdown`, `session_details`,
+  `account_info`, `rate_limits`, `workflow_snapshot`).
+- **v0.6** — modo TUI interativo com 4 abas (Textual).
+- **v0.1–v0.5** — views `now` / `today` / `tools` / `session`.
+
+Ver `docs/SCOPE.md` para escopo detalhado e decisões técnicas.
 
 ## Licença
 
