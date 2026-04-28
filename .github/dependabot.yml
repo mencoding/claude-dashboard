@@ -1,0 +1,10 @@
+# Dependabot — bumps semanais para GitHub Actions (SHA pinning).
+# Necessário porque .github/workflows/*.yml usa SHAs imutáveis em vez de tags.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
