@@ -167,3 +167,63 @@ def test_tools_breakdown_returns_ordered_list() -> None:
     assert result["total_calls"] == 175
     # % do total correto
     assert result["tools"][0]["pct_of_total"] == round(100 * 100 / 175, 2)
+
+
+# ---- Envelope MCP (#54-d1) ------------------------------------------
+
+
+def test_envelope_inclui_schema_version_e_dashboard_version() -> None:
+    """_envelope helper adiciona ambos os campos canonicos."""
+    out = mcp_server._envelope({"foo": "bar"})
+    assert out["_schema_version"] == mcp_server.SCHEMA_VERSION
+    assert out["_schema_version"] == 1
+    # dashboard_version vem do package metadata; basta existir.
+    assert "dashboard_version" in out
+    assert isinstance(out["dashboard_version"], str)
+    # Payload original preservado
+    assert out["foo"] == "bar"
+
+
+def test_envelope_em_active_sessions() -> None:
+    fake_live = []
+    with patch.object(mcp_server, "collect_live_sessions", return_value=fake_live):
+        result = mcp_server.active_sessions()
+    assert result["_schema_version"] == 1
+    assert "dashboard_version" in result
+    assert "sessions" in result
+
+
+def test_envelope_em_today_summary() -> None:
+    with patch.object(mcp_server, "collect_sessions_since", return_value=[]):
+        result = mcp_server.today_summary()
+    assert result["_schema_version"] == 1
+    assert "tokens_total" in result
+
+
+def test_envelope_em_session_details_erro() -> None:
+    """Mesmo o caminho de erro deve ter envelope."""
+    with patch.object(mcp_server, "find_transcript_for_session", return_value=None):
+        result = mcp_server.session_details("nonexistent")
+    assert result["_schema_version"] == 1
+    assert "error" in result
+
+
+def test_envelope_em_tools_breakdown() -> None:
+    with patch.object(mcp_server, "collect_tool_usage_since", return_value={}):
+        result = mcp_server.tools_breakdown(hours=24)
+    assert result["_schema_version"] == 1
+    assert result["total_calls"] == 0
+
+
+def test_envelope_em_account_info_sem_arquivo() -> None:
+    with patch.object(mcp_server, "read_account_info", return_value=None):
+        result = mcp_server.account_info()
+    assert result["_schema_version"] == 1
+    assert "error" in result
+
+
+def test_envelope_em_rate_limits_nao_instalado() -> None:
+    with patch.object(mcp_server, "read_rate_limits", return_value={}):
+        result = mcp_server.rate_limits()
+    assert result["_schema_version"] == 1
+    assert result["installed"] is False

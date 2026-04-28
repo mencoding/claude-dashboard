@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-04-28
+
+### Added
+- MCP server: all 7 tools (`account_info`, `rate_limits`, `active_sessions`, `today_summary`, `tools_breakdown`, `session_details`, `workflow_snapshot`) now wrap their return through `_envelope()` adding `_schema_version: 1` (bump only on breaking changes — additions don't bump) and `dashboard_version` (current package version) at the top level. Versioning policy documented in `docs/mcp-design.md`. Closes part of #54 (issue derivada d1). 7 new tests in `tests/test_mcp_server.py`.
+
 ## [0.15.0] - 2026-04-28
 
 ### Changed
