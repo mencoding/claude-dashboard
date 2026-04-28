@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-28
+
+### Added
+- TUI: new `Audit` tab with incremental tail of `~/.claude/iris/audit/sessions.log`, color-coded tool calls, filters (`/tool=`, `/error`, `/session=`), drill-down via `pkexec` to `/var/log/claude/tools.log`, and pausable auto-scroll (audit log feature, phase 2 of [#24], closes [#33]) ([#41]).
+- Audit module: `parser.py`, `tail.py` (incremental tailer with offset+inode tracking), `models.py`, and `views/audit.py`.
+
 ## [0.13.1] - 2026-04-28
 
 ### Fixed
@@ -118,7 +124,8 @@ First stable release.
 - Pricing table validated against the official Anthropic table; Opus correctly priced 3× cheaper than the previous estimate.
 - Cost-band coloring across all views ([#6]).
 
-[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/mencoding/claude-dashboard/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/mencoding/claude-dashboard/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/mencoding/claude-dashboard/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/mencoding/claude-dashboard/compare/v0.11.3...v0.12.0
@@ -167,3 +174,5 @@ First stable release.
 [#30]: https://github.com/mencoding/claude-dashboard/pull/30
 [#32]: https://github.com/mencoding/claude-dashboard/pull/32
 [#34]: https://github.com/mencoding/claude-dashboard/pull/34
+[#33]: https://github.com/mencoding/claude-dashboard/issues/33
+[#41]: https://github.com/mencoding/claude-dashboard/pull/41
