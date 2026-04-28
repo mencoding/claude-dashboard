@@ -109,15 +109,6 @@ class DashboardApp(App):
     #session-hint {
         margin: 0 0 1 0;
     }
-    /* Linha discreta abaixo do Footer com a versão do software. */
-    #version-line {
-        dock: bottom;
-        height: 1;
-        background: $boost;
-        color: $text-disabled;
-        text-align: right;
-        padding: 0 1;
-    }
     """
 
     BINDINGS = [
@@ -130,6 +121,7 @@ class DashboardApp(App):
     ]
 
     TITLE = "claude-dashboard"
+    SUB_TITLE = f"v{__version__}"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -149,7 +141,6 @@ class DashboardApp(App):
                     yield ListView(id="session-list")
                     yield Static(id="session-detail")
         yield Footer()
-        yield Static(f"claude-dashboard v{__version__}", id="version-line")
 
     def on_mount(self) -> None:
         """Renderiza as 4 abas no mount e agenda auto-refresh só da Now.
