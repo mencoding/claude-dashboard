@@ -103,7 +103,11 @@ def test_workflow_snapshot_alert_on_high_cost() -> None:
         # conservador — quando não se sabe, assume-se que USD é real)
         snap = mcp_server.workflow_snapshot()
 
-    assert any("Consumo agregado do dia" in a for a in snap["alerts"])
+    # #54-d2: alertas viraram dicts estruturados
+    assert any(
+        a.get("code") == "daily_cost" or "Consumo agregado do dia" in a.get("message", "")
+        for a in snap["alerts"]
+    )
 
 
 def test_workflow_snapshot_suppresses_cost_alert_on_flat_rate() -> None:
@@ -126,7 +130,9 @@ def test_workflow_snapshot_suppresses_cost_alert_on_flat_rate() -> None:
         snap = mcp_server.workflow_snapshot()
 
     # Alerta de custo NÃO deve aparecer porque is_flat_rate=True
-    assert not any("Consumo agregado do dia" in a for a in snap["alerts"])
+    assert not any(
+        a.get("code") == "daily_cost" for a in snap["alerts"]
+    )
 
 
 def test_workflow_snapshot_alert_on_high_context() -> None:
@@ -140,7 +146,11 @@ def test_workflow_snapshot_alert_on_high_context() -> None:
          patch.object(mcp_server, "collect_tool_usage_since", return_value={}):
         snap = mcp_server.workflow_snapshot()
 
-    assert any("contexto ativo" in a and "/compact" in a for a in snap["alerts"])
+    assert any(
+        a.get("code") == "context_full"
+        or ("contexto ativo" in a.get("message", "") and "/compact" in a.get("message", ""))
+        for a in snap["alerts"]
+    )
 
 
 def test_session_details_returns_error_for_unknown_sid() -> None:
@@ -323,16 +333,78 @@ def test_audit_session_partial_existe(tmp_path) -> None:
     assert result["error_rate"] == 0.5
 
 
+# ---- Alertas estruturados (#54-d2) ----------------------------------
+
+
+def test_alert_high_turn_tokens_shape() -> None:
+    """Alerta de high_turn_tokens deve ter level, code, session_id, message, data."""
+    # tokens_per_turn = total_output / messages_assistant. Pra >300k:
+    # 4M output / 10 turns = 400k/turn.
+    s = _mk_session(
+        sid="abc12345-def-1111-2222-3333",
+        messages_assistant=10,
+    )
+    s.usage_by_model["claude-opus-4-7"] = Usage(output_tokens=4_000_000)
+    assert s.tokens_per_turn > 300_000
+    alerts = mcp_server._infer_alerts(live_stats=[s], today_stats=[])
+    matches = [a for a in alerts if a["code"] == "high_turn_tokens"]
+    assert len(matches) == 1
+    a = matches[0]
+    assert a["level"] in ("warning", "critical")
+    assert a["session_id"] == "abc12345-def-1111-2222-3333"
+    assert "message" in a and isinstance(a["message"], str)
+    assert "data" in a
+    assert a["data"]["tokens_per_turn"] == 400_000
+    assert a["data"]["threshold"] == 300_000
+
+
+def test_alert_context_full_critical_acima_de_180k() -> None:
+    """Threshold critical em > 180k, warning em 150k-180k.
+
+    active_context_tokens vem de last_usage.input_tokens + cache_read.
+    """
+    s_crit = _mk_session(last_usage=Usage(input_tokens=190_000, cache_read=0))
+    alerts = mcp_server._infer_alerts(live_stats=[s_crit], today_stats=[])
+    matches = [a for a in alerts if a["code"] == "context_full"]
+    assert matches[0]["level"] == "critical"
+
+    s_warn = _mk_session(last_usage=Usage(input_tokens=160_000, cache_read=0))
+    alerts = mcp_server._infer_alerts(live_stats=[s_warn], today_stats=[])
+    matches = [a for a in alerts if a["code"] == "context_full"]
+    assert matches[0]["level"] == "warning"
+
+
+def test_alert_codes_validos() -> None:
+    """Lista de codes esperados — qualquer code novo deve ser registrado aqui."""
+    valid = {
+        "high_turn_tokens", "idle_session", "context_full",
+        "daily_cost", "rate_limit_5h", "rate_limit_7d",
+    }
+    # Sessao que dispara varios alertas
+    s = _mk_session(
+        messages_assistant=10,
+        last_usage=Usage(input_tokens=190_000, cache_read=0),
+    )
+    s.usage_by_model["claude-opus-4-7"] = Usage(output_tokens=4_000_000)
+    s.last_activity_ms = 0  # ha muito tempo
+    s.alive = True
+    alerts = mcp_server._infer_alerts(live_stats=[s], today_stats=[])
+    for a in alerts:
+        assert a["code"] in valid, f"Code desconhecido: {a['code']}"
+
+
 # ---- dashboard_health (#54-d4) --------------------------------------
 
 
 def test_dashboard_health_log_inexistente(tmp_path) -> None:
     """Sem sessions.log, issue lista o problema."""
     fake = tmp_path / "missing.log"
-    with patch.object(mcp_server, "AUDIT_LOG_PATH", fake):
-        with patch.object(mcp_server, "_check_rsyslog_active", return_value=True):
-            with patch.object(mcp_server, "_audit_hook_wired", return_value=False):
-                result = mcp_server.dashboard_health()
+    with (
+        patch.object(mcp_server, "AUDIT_LOG_PATH", fake),
+        patch.object(mcp_server, "_check_rsyslog_active", return_value=True),
+        patch.object(mcp_server, "_audit_hook_wired", return_value=False),
+    ):
+        result = mcp_server.dashboard_health()
     assert result["_schema_version"] == 1
     assert result["audit_log_exists"] is False
     assert result["audit_log_last_entry_age_seconds"] is None
@@ -343,10 +415,12 @@ def test_dashboard_health_log_inexistente(tmp_path) -> None:
 def test_dashboard_health_tudo_ok(tmp_path) -> None:
     log = tmp_path / "sessions.log"
     log.write_text("dummy\n")
-    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
-        with patch.object(mcp_server, "_check_rsyslog_active", return_value=True):
-            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
-                result = mcp_server.dashboard_health()
+    with (
+        patch.object(mcp_server, "AUDIT_LOG_PATH", log),
+        patch.object(mcp_server, "_check_rsyslog_active", return_value=True),
+        patch.object(mcp_server, "_audit_hook_wired", return_value=True),
+    ):
+        result = mcp_server.dashboard_health()
     assert result["audit_log_exists"] is True
     assert result["rsyslog_active"] is True
     assert result["audit_hook_wired"] is True
@@ -356,10 +430,12 @@ def test_dashboard_health_tudo_ok(tmp_path) -> None:
 def test_dashboard_health_rsyslog_inativo(tmp_path) -> None:
     log = tmp_path / "sessions.log"
     log.write_text("dummy\n")
-    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
-        with patch.object(mcp_server, "_check_rsyslog_active", return_value=False):
-            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
-                result = mcp_server.dashboard_health()
+    with (
+        patch.object(mcp_server, "AUDIT_LOG_PATH", log),
+        patch.object(mcp_server, "_check_rsyslog_active", return_value=False),
+        patch.object(mcp_server, "_audit_hook_wired", return_value=True),
+    ):
+        result = mcp_server.dashboard_health()
     assert any("rsyslog inativo" in msg for msg in result["issues"])
 
 
@@ -371,10 +447,12 @@ def test_dashboard_health_log_velho(tmp_path) -> None:
     # Mtime 2 dias atras
     old = datetime.now().timestamp() - 2 * 24 * 3600
     os.utime(log, (old, old))
-    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
-        with patch.object(mcp_server, "_check_rsyslog_active", return_value=True):
-            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
-                result = mcp_server.dashboard_health()
+    with (
+        patch.object(mcp_server, "AUDIT_LOG_PATH", log),
+        patch.object(mcp_server, "_check_rsyslog_active", return_value=True),
+        patch.object(mcp_server, "_audit_hook_wired", return_value=True),
+    ):
+        result = mcp_server.dashboard_health()
     assert result["audit_log_last_entry_age_seconds"] >= 24 * 3600
     assert any("sem updates" in msg for msg in result["issues"])
 
@@ -383,10 +461,12 @@ def test_dashboard_health_systemctl_ausente(tmp_path) -> None:
     """systemctl ausente -> rsyslog_active=None, sem issue de rsyslog."""
     log = tmp_path / "sessions.log"
     log.write_text("dummy\n")
-    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
-        with patch.object(mcp_server, "_check_rsyslog_active", return_value=None):
-            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
-                result = mcp_server.dashboard_health()
+    with (
+        patch.object(mcp_server, "AUDIT_LOG_PATH", log),
+        patch.object(mcp_server, "_check_rsyslog_active", return_value=None),
+        patch.object(mcp_server, "_audit_hook_wired", return_value=True),
+    ):
+        result = mcp_server.dashboard_health()
     assert result["rsyslog_active"] is None
     # Issue de rsyslog so se False, nao se None
     assert not any("rsyslog inativo" in msg for msg in result["issues"])

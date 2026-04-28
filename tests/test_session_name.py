@@ -340,4 +340,9 @@ def test_workflow_snapshot_alert_uses_session_name_when_present() -> None:
          patch.object(mcp_server, "collect_sessions_since", return_value=[]), \
          patch.object(mcp_server, "collect_tool_usage_since", return_value={}):
         snap = mcp_server.workflow_snapshot()
-    assert any("claude-dash" in a for a in snap["alerts"])
+    # #54-d2: alertas viraram dicts; checa em message
+    assert any(
+        "claude-dash" in a.get("message", "")
+        or "claude-dash" in str(a.get("data", {}))
+        for a in snap["alerts"]
+    )
