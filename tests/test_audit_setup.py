@@ -126,8 +126,45 @@ def test_state_installed_when_all_present(tmp_path, monkeypatch):
     au.LOGROTATE_SYS_CONF.parent.mkdir(parents=True, exist_ok=True)
     au.LOGROTATE_SYS_CONF.write_text("x")
     au.VAR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # #52 fix: 'installed' agora exige grupo claude-audit + chown.
+    monkeypatch.setattr(au, "_claude_audit_group_exists", lambda: True)
+    monkeypatch.setattr(au, "_user_in_claude_audit_group", lambda: True)
+    monkeypatch.setattr(au, "_var_log_owned_by_claude_audit", lambda: True)
     state = au._detect_state()
     assert state.mode() == "installed"
+
+
+def test_state_partial_when_grupo_claude_audit_pendente(tmp_path, monkeypatch):
+    """Bug fix: tudo 'instalado' menos o grupo claude-audit deve dar partial,
+    nao installed. Anteriormente o setup-audit cairia em 'Tudo OK — nada
+    a fazer' deixando o usuario stuck sem regenerar o root script."""
+    p = _patch_paths(monkeypatch, tmp_path)
+    settings = {
+        "hooks": {"PostToolUse": [{
+            "matcher": ".*",
+            "hooks": [{"type": "command", "command": "claude-dash-audit-hook"}],
+        }]}
+    }
+    p["settings"].write_text(json.dumps(settings))
+    p["local_log"].parent.mkdir(parents=True, exist_ok=True)
+    p["local_log"].touch()
+    p["archive"].mkdir(parents=True)
+    p["logrotate_user"].parent.mkdir(parents=True, exist_ok=True)
+    p["logrotate_user"].write_text("x")
+    p["systemd_svc"].parent.mkdir(parents=True, exist_ok=True)
+    p["systemd_svc"].write_text("x")
+    p["systemd_tmr"].write_text("x")
+    au.RSYSLOG_CONF.parent.mkdir(parents=True, exist_ok=True)
+    au.RSYSLOG_CONF.write_text("x")
+    au.LOGROTATE_SYS_CONF.parent.mkdir(parents=True, exist_ok=True)
+    au.LOGROTATE_SYS_CONF.write_text("x")
+    au.VAR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Cenario bug: tudo instalado mas grupo claude-audit ainda nao existe
+    monkeypatch.setattr(au, "_claude_audit_group_exists", lambda: False)
+    monkeypatch.setattr(au, "_user_in_claude_audit_group", lambda: False)
+    monkeypatch.setattr(au, "_var_log_owned_by_claude_audit", lambda: False)
+    state = au._detect_state()
+    assert state.mode() == "partial"
 
 
 def test_state_partial(tmp_path, monkeypatch):
@@ -329,8 +366,13 @@ def test_root_uninstall_script_preserves_log():
 # Modo installed: no-op
 # ---------------------------------------------------------------------------
 
-def _make_installed_state(p: dict) -> None:
-    """Helper: cria estado completo do modo `installed` em tmp_path."""
+def _make_installed_state(p: dict, monkeypatch=None) -> None:
+    """Helper: cria estado completo do modo `installed` em tmp_path.
+
+    #52 fix: tambem mocka grupo claude-audit como existente quando
+    monkeypatch e' fornecido (todos os testes que esperam mode="installed"
+    devem passar isso).
+    """
     settings = {"hooks": {"PostToolUse": [{
         "matcher": ".*",
         "hooks": [{"type": "command", "command": "claude-dash-audit-hook"}],
@@ -350,11 +392,15 @@ def _make_installed_state(p: dict) -> None:
     au.LOGROTATE_SYS_CONF.write_text("x")
     au.VAR_LOG_DIR.mkdir(parents=True, exist_ok=True)
     au.VAR_LOG_FILE.touch()
+    if monkeypatch is not None:
+        monkeypatch.setattr(au, "_claude_audit_group_exists", lambda: True)
+        monkeypatch.setattr(au, "_user_in_claude_audit_group", lambda: True)
+        monkeypatch.setattr(au, "_var_log_owned_by_claude_audit", lambda: True)
 
 
 def test_installed_is_noop(tmp_path, monkeypatch, capsys):
     p = _patch_paths(monkeypatch, tmp_path)
-    _make_installed_state(p)
+    _make_installed_state(p, monkeypatch)
 
     rc = au.main_setup_audit(_args())
     assert rc == 0
@@ -365,7 +411,7 @@ def test_installed_is_noop(tmp_path, monkeypatch, capsys):
 def test_installed_silent_when_legacy_hook_is_compat_shim(tmp_path, monkeypatch, capsys):
     """Issue #49: estado correto (shim instalado) nao deve imprimir aviso."""
     p = _patch_paths(monkeypatch, tmp_path)
-    _make_installed_state(p)
+    _make_installed_state(p, monkeypatch)
     p["legacy_hook"].write_text(au.LEGACY_SHIM_CONTENT)
 
     rc = au.main_setup_audit(_args())
@@ -378,7 +424,7 @@ def test_installed_silent_when_legacy_hook_is_compat_shim(tmp_path, monkeypatch,
 def test_installed_reinstalls_shim_when_legacy_bash_present(tmp_path, monkeypatch, capsys):
     """Issue #49: bash legado em estado `installed` -> instala shim em vez de avisar."""
     p = _patch_paths(monkeypatch, tmp_path)
-    _make_installed_state(p)
+    _make_installed_state(p, monkeypatch)
     # Bash legado de 120 linhas (nao contem 'exec claude-dash-audit-hook')
     p["legacy_hook"].write_text("#!/bin/bash\n# script legado\necho old\n")
 
@@ -501,3 +547,57 @@ def test_template_logrotate_usa_claude_audit() -> None:
     body = au._read_template("logrotate-system-claude-audit")
     assert "create 0640 syslog claude-audit" in body
     assert "syslog adm" not in body
+
+
+def test_setup_audit_regenera_script_quando_grupo_pendente(
+    tmp_path, monkeypatch, capsys,
+) -> None:
+    """Bug fix: usuario na v0.14.x que upgradou pra v0.15.x e ainda nao
+    rodou o sudo bash do grupo claude-audit. Antes do fix, setup-audit
+    detectava 'installed' e dizia 'Tudo OK' sem regenerar o script root,
+    deixando o usuario stuck. Agora deve cair em 'partial' e re-emitir
+    o script.
+    """
+    p = _patch_paths(monkeypatch, tmp_path)
+    settings = {
+        "hooks": {"PostToolUse": [{
+            "matcher": ".*",
+            "hooks": [{"type": "command", "command": "claude-dash-audit-hook"}],
+        }]}
+    }
+    p["settings"].write_text(json.dumps(settings))
+    p["local_log"].parent.mkdir(parents=True, exist_ok=True)
+    p["local_log"].touch()
+    p["archive"].mkdir(parents=True)
+    p["logrotate_user"].parent.mkdir(parents=True, exist_ok=True)
+    p["logrotate_user"].write_text("x")
+    p["systemd_svc"].parent.mkdir(parents=True, exist_ok=True)
+    p["systemd_svc"].write_text("x")
+    p["systemd_tmr"].write_text("x")
+    au.RSYSLOG_CONF.parent.mkdir(parents=True, exist_ok=True)
+    au.RSYSLOG_CONF.write_text("x")
+    au.LOGROTATE_SYS_CONF.parent.mkdir(parents=True, exist_ok=True)
+    au.LOGROTATE_SYS_CONF.write_text("x")
+    au.VAR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    au.VAR_LOG_FILE.touch()
+    # Cenario do bug: tudo "instalado" mas grupo claude-audit pendente
+    monkeypatch.setattr(au, "_claude_audit_group_exists", lambda: False)
+    monkeypatch.setattr(au, "_user_in_claude_audit_group", lambda: False)
+    monkeypatch.setattr(au, "_var_log_owned_by_claude_audit", lambda: False)
+    # Override do path do script root pra tmp_path (nao escrever em /tmp real)
+    root_script = tmp_path / "root-setup.sh"
+    monkeypatch.setattr(au, "ROOT_SETUP_SCRIPT", root_script)
+
+    rc = au.main_setup_audit(_args())
+    assert rc == 0
+    out = capsys.readouterr().out
+
+    # NAO pode dizer "Tudo OK" — esse era o bug original
+    assert "Tudo OK" not in out
+    # DEVE detectar como partial e gerar o script novo
+    assert "PARTIAL" in out or "partial" in out.lower()
+    assert root_script.is_file()
+    body = root_script.read_text()
+    # Script novo tem a parte do grupo
+    assert "groupadd -f claude-audit" in body
+    assert "usermod -aG claude-audit" in body

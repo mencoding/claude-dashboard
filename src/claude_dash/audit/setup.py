@@ -149,10 +149,17 @@ class State:
             and self.systemd_timer_exists
             and self.has_new_wire
         )
+        # #52 fix: grupo claude-audit + chown da tools.log fazem parte do
+        # estado "installed". Sem isso, drill-down forense (`s` na aba Audit)
+        # falha com PermissionError e a migracao da v0.14.x->v0.15.0 fica
+        # incompleta. State detector ja captura essas flags em
+        # _claude_audit_group_exists/_var_log_owned_by_claude_audit.
         all_root = (
             self.rsyslog_conf_exists
             and self.logrotate_sys_exists
             and self.var_log_dir_exists
+            and self.claude_audit_group_exists
+            and self.var_log_owned_by_claude_audit
         )
         if all_user and all_root:
             return "installed"
