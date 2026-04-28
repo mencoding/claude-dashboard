@@ -13,15 +13,21 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_app_mounts_with_four_tabs() -> None:
+def test_app_mounts_with_five_tabs() -> None:
     async def run():
         app = DashboardApp()
         async with app.run_test() as pilot:
             await pilot.pause(0.3)
             tc = app.query_one(TabbedContent)
-            # 4 abas esperadas
+            # 5 abas esperadas (Audit adicionada na v0.14.0)
             tab_ids = [pane.id for pane in tc.query("TabPane")]
-            assert set(tab_ids) == {"tab-now", "tab-today", "tab-tools", "tab-session"}
+            assert set(tab_ids) == {
+                "tab-now",
+                "tab-today",
+                "tab-tools",
+                "tab-session",
+                "tab-audit",
+            }
             # Inicia na aba Now
             assert tc.active == "tab-now"
 
