@@ -118,6 +118,10 @@ class DashboardApp(App):
         Binding("4", "show_tab('tab-session')", "Session"),
         Binding("r", "refresh_current", "Refresh"),
         Binding("q", "quit", "Quit"),
+        # Ctrl+C fecha direto (convenção de terminal). Sobrescreve o popup
+        # padrão do Textual que sugere Ctrl+D — preferimos comportamento
+        # SIGINT clássico, já que `q` continua disponível como atalho seguro.
+        Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
     ]
 
     TITLE = "claude-dashboard"
