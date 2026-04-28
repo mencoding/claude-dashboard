@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.7] - 2026-04-28
+
+### Fixed
+- `claude-dash setup-audit` now correctly detects pending `claude-audit` group migration as `partial` mode (was incorrectly reporting `installed` and saying "Tudo OK — nada a fazer"). State detector already tracked `claude_audit_group_exists` and `var_log_owned_by_claude_audit` since v0.15.0 (#52), but the `mode()` heuristic ignored both — leaving users who upgraded from v0.14.x stuck with a stale `/tmp/claude-audit-root-setup.sh` and no way to regenerate it short of manual `groupadd`/`usermod`/`chown`. Now adding a user to `claude-audit` after the upgrade simply requires re-running `claude-dash setup-audit` + `sudo bash /tmp/claude-audit-root-setup.sh` + re-login. Reported during validation on RET-DTI-601048.
+- 2 new tests in `tests/test_audit_setup.py`: `test_state_partial_when_grupo_claude_audit_pendente` covers the mode detection; `test_setup_audit_regenera_script_quando_grupo_pendente` is the end-to-end regression — confirms `setup-audit` writes the root script with `groupadd -f claude-audit` and `usermod -aG` lines when group is missing.
+
 ## [0.15.6] - 2026-04-28
 
 ### Added
