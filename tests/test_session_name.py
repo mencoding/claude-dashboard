@@ -192,6 +192,60 @@ def test_session_name_survives_cache_roundtrip(
     assert stats2.session_name == "saturnine+20260427"
 
 
+def test_legacy_cache_without_schema_version_is_invalidated(
+    tmp_path: Path, isolated_cache: Path
+) -> None:
+    """Cache pré-v1 (sem schema_version) é tratado como ausente.
+
+    Caches antigos não foram escritos com `session_name` e devolveriam
+    None mesmo para sessões com /rename — reprocessamento força a leitura
+    da entry custom-title que já existe no transcript.
+    """
+    from claude_dash import cache as cache_mod
+
+    entries = [
+        {"type": "custom-title", "customTitle": "real-name",
+         "sessionId": "test-sid"},
+        {"type": "assistant", "message": {"model": "m",
+            "usage": {"input_tokens": 10}}},
+    ]
+    ref = _make_transcript(tmp_path, entries)
+
+    # Escreve cache "legacy" manualmente (sem schema_version, sem
+    # session_name) imitando o formato pré-v0.12
+    legacy_payload = {
+        "inode": ref.path.stat().st_ino,
+        "mtime_ms": ref.mtime_ms,
+        "byte_offset": ref.path.stat().st_size,
+        "stats": {
+            "session_id": ref.session_id,
+            "cwd": "",
+            "started_at_ms": 0,
+            "last_activity_ms": ref.mtime_ms,
+            "pid": None,
+            "alive": False,
+            "version": "",
+            "transcript_path": None,
+            "usage_by_model": {"m": {
+                "input_tokens": 10, "output_tokens": 0,
+                "cache_creation_1h": 0, "cache_creation_5m": 0, "cache_read": 0,
+            }},
+            "tools": {},
+            "messages_user": 0,
+            "messages_assistant": 1,
+            "subagents": 0,
+            "last_usage": None,
+        },
+    }
+    cache_path = cache_mod.cache_path_for(ref.session_id)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(legacy_payload))
+
+    # Carrega: deve invalidar e reprocessar, capturando session_name
+    stats = build_stats_for_transcript(ref, use_cache=True)
+    assert stats.session_name == "real-name"
+
+
 # --- MCP server ---------------------------------------------------------
 
 
