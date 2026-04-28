@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-04-28
+
+### Added
+- MCP tool `dashboard_health()` — health check da pipeline do dashboard em uma chamada. Retorna `rsyslog_active` (via `systemctl is-active`), `audit_hook_wired` (via parse do `~/.claude/settings.json`), `audit_log_exists`, `audit_log_last_entry_age_seconds` (mtime da `sessions.log`), e lista `issues` humano-readable do que está errado (vazia = tudo OK). `systemctl` ausente (containers, non-systemd) -> `rsyslog_active=None` sem flagar issue. Closes part of #54 (issue derivada d4). 5 testes novos.
+
 ## [0.15.3] - 2026-04-28
 
 ### Added
