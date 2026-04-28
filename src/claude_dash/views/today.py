@@ -24,7 +24,6 @@ from claude_dash.views.now import (
     _fmt_short_cwd,
     _fmt_tokens,
     _session_label,
-    _short_sid,
     _tools_summary,
     _total_cost,
     colored_cost,
