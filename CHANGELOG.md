@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.13] - 2026-04-28
+
+### Added
+- TUI: **filtro progressivo de marcação** na aba `Audit`. Quando o usuário marca uma entry com `Space`, **todas as entries da mesma `session_id` somem da tabela** — view fica focada nas sessões ainda não marcadas, ergonomico pra montar comparison cross-session sem precisar caçar SIDs distintos manualmente. Cada Space adicional filtra mais uma sessão. `Esc` limpa todas as marcas e restaura a view completa. Compare via Enter/c também limpa marcas + restaura.
+- TUI: **`Esc` limpa marcas** quando nenhum input prompt está ativo (filter/export/compare). Adiciona um caminho de cancelamento sem precisar dar Enter no compare. Sugestão exibida no status footer: `marked=N (M sessões filtradas; Esc limpa)`.
+- 2 testes novos: `test_marks_filtram_sessao_da_visible_cache` cobre o auto-filter; `test_esc_limpa_marcas_quando_sem_prompt_ativo` cobre o caminho de Esc.
+
+### Changed
+- `action_audit_toggle_mark` voltou a fazer `full_rebuild` (via `_audit_table_signature = None`) — necessário pra filtro progressivo redrawn da tabela. Trade-off com a v0.15.11 (que fazia `update_cell_at` pra preservar scroll): agora a entry recém-marcada some naturalmente, então scroll preservation não é meaningful — a tabela mudou de conteúdo.
+- Linha de atalhos in-tab atualizada: `Spc mark+filter`, `Esc clear marks`.
+
+### Workflow recomendado pra cross-session compare
+
+1. Navegue até qualquer entry de uma sessão A → `Space`. Sessão A some da view.
+2. Navegue até entry de sessão B → `Space`. Sessão B some da view.
+3. (Opcional) marque mais sessões.
+4. `Enter` → comparison lado-a-lado das sessões marcadas.
+5. (Ou) `Esc` → cancela e restaura view.
+
 ## [0.15.12] - 2026-04-28
 
 ### Changed

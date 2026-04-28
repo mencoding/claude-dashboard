@@ -398,6 +398,83 @@ def test_enter_com_2plus_marcadas_dispara_compare() -> None:
     _run(run())
 
 
+def test_marks_filtram_sessao_da_visible_cache() -> None:
+    """#67-followup-5: ao marcar entry, a sessao toda some da view."""
+    async def run():
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+
+        from claude_dash.audit.models import AuditEntry
+
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("5")
+            await pilot.pause(0.3)
+
+            # Limpa buffer de entries reais pra teste deterministico
+            app._audit_entries.clear()
+            # Desativa filtro de host atual pra entries syntheticas (hostname='host')
+            # passarem; senao serao excluidas por nao baterem com CURRENT_HOSTNAME.
+            app._audit_host_only_current = False
+
+            # Usa timestamp recente pra cair na janela default 24h
+            base = _dt.now(tz=_tz(_td(hours=-3))) - _td(minutes=5)
+            # UUIDs v4 validos (pos 14 == 4, pos 19 in {8,9,a,b})
+            sid_a = "0efd3cf4-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            sid_b = "a1b2cccc-cccc-4ccc-8ccc-cccccccccccc"
+            for i in range(4):
+                app._audit_entries.append(AuditEntry(
+                    timestamp=base + _td(seconds=i),
+                    hostname="host", pid="1",
+                    session_id=sid_a if i < 2 else sid_b,
+                    tool="Bash", tool_use_id=f"synthetic-tu-{i}",
+                    status="success", duration_ms=10, perm_mode="auto",
+                    input_sha="0", input_bytes=10, output_bytes=20,
+                ))
+            app._refresh_audit()
+            await pilot.pause(0.2)
+
+            # Antes da marca: ambas as sessoes visiveis
+            sids_in_view = {e.session_id for e in app._audit_visible_cache}
+            assert sid_a in sids_in_view
+            assert sid_b in sids_in_view
+
+            # Marca uma entry de sid_a manualmente (simula Space)
+            app._audit_marked.add("synthetic-tu-0")
+            app._audit_table_signature = None
+            app._refresh_audit()
+            await pilot.pause(0.2)
+
+            # Verifica que NENHUMA entry de sid_a aparece na cache visivel
+            sids_in_view = {e.session_id for e in app._audit_visible_cache}
+            assert sid_a not in sids_in_view
+            # sid_b ainda visivel (nao foi marcado)
+            assert sid_b in sids_in_view
+    _run(run())
+
+
+def test_esc_limpa_marcas_quando_sem_prompt_ativo() -> None:
+    """#67-followup-5: Esc na aba Audit sem prompts ativos limpa marcas."""
+    async def run():
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("5")
+            await pilot.pause(0.3)
+
+            app._audit_marked.add("any-key-1")
+            app._audit_marked.add("any-key-2")
+            assert len(app._audit_marked) == 2
+
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+
+            assert len(app._audit_marked) == 0
+    _run(run())
+
+
 def test_clear_marks_and_refresh() -> None:
     """_clear_marks_and_refresh esvazia o set."""
     async def run():

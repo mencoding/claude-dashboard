@@ -670,6 +670,15 @@ class DashboardApp(App):
                 show_test_sessions=self._audit_show_tests,
                 current_host=current_host,
             )
+            # #67-followup-5: filtro progressivo de marcacao. Quando o
+            # usuario marca uma entry (Space), a tabela esconde TODAS
+            # as entries dessa session_id — o foco vai pras sessoes
+            # ainda nao marcadas, ergonomico pra montar comparison
+            # cross-session sem precisar caçar SIDs distintos. Esc
+            # limpa marcas e restaura a view completa.
+            marked_sids = self._marked_session_ids()
+            if marked_sids:
+                visible = [e for e in visible if e.session_id not in marked_sids]
             # Slice EXATO do que vai aparecer na DataTable. Cache armazena
             # esse slice (NAO a lista cheia) — sem isso, cursor_row da
             # DataTable nao bate com o indice no cache quando filter
@@ -700,11 +709,15 @@ class DashboardApp(App):
                 status_parts.append("host=todos")
             if self._audit_show_tests:
                 status_parts.append("show-tests=on")
-            # #67-followup: contador de marcadas pra usuario saber
-            # quantas estao no batch da proxima Enter/c.
+            # #67-followup-5: contador de marcadas + indicacao de filtro
+            # progressivo. N marcadas = N sessoes escondidas; Esc limpa.
             n_marked = len(self._audit_marked)
             if n_marked > 0:
-                status_parts.append(f"[bold yellow]marked={n_marked}[/]")
+                marked_sids_count = len(self._marked_session_ids())
+                status_parts.append(
+                    f"[bold yellow]marked={n_marked} "
+                    f"({marked_sids_count} sessao(oes) filtrada(s); Esc limpa)[/]"
+                )
             paused = self._is_audit_paused()
             if paused:
                 status_parts.append("[bold yellow]PAUSED — Press End to resume[/]")
@@ -869,10 +882,11 @@ class DashboardApp(App):
             ("t", "window"),
             ("?", "tests"),
             ("h", "host"),
-            ("Spc", "mark"),
-            ("Enter/s", "drill-down"),
+            ("Spc", "mark+filter"),
+            ("Enter/s", "drill/cmp"),
             ("c", "compare"),
             ("e", "export"),
+            ("Esc", "clear marks"),
             ("End", "resume"),
         ]
         parts = "  ".join(
@@ -960,11 +974,15 @@ class DashboardApp(App):
             pass
 
     def action_audit_toggle_mark(self) -> None:
-        """Tecla `Space`: toggla marca da entry no cursor (#67-followup).
+        """Tecla `Space`: marca entry no cursor + filtra a sessao (#67-followup-5).
 
-        Atualiza apenas a celula Mk via update_cell_at — sem rebuild,
-        sem perda de scroll position, sem perda de cursor. Antes
-        forcava full_rebuild que zerava scroll (bug reportado).
+        Ao marcar uma entry, TODAS as entries da mesma session_id somem
+        da tabela — a view fica focada em sessoes ainda nao marcadas,
+        facilitando montar comparison cross-session. Esc limpa marcas
+        e restaura view completa.
+
+        Marcar uma entry ja-marcada (mas invisivel pelo filtro) nao e'
+        possivel via cursor; user usa Esc pra limpar tudo e remarcar.
         """
         if not self._audit_active():
             return
@@ -981,28 +999,18 @@ class DashboardApp(App):
         key = entry.tool_use_id or entry.session_id
         if not key:
             return
+        # Toggle: se ja marcada (improvavel pela auto-filtragem mas
+        # possivel se entry ainda nao foi escondida), unmark. Caso
+        # contrario, mark.
         if key in self._audit_marked:
             self._audit_marked.discard(key)
-            new_mark = " "
         else:
             self._audit_marked.add(key)
-            new_mark = "✓"
-        # Update in-place da celula Mk (coluna 0). Preserva scroll +
-        # cursor sem precisar do _audit_table_signature reset.
-        try:
-            from textual.coordinate import Coordinate
-            dt.update_cell_at(
-                Coordinate(cursor_row, 0),
-                Text(new_mark, style="bold yellow", justify="center"),
-            )
-        except Exception:
-            # Fallback se update_cell_at indisponivel: tick proximo
-            # vai sincronizar via _audit_marked state.
-            pass
-        # Atualiza apenas o status line (contador de marcadas).
-        self._update_audit_status_only()
-        # Garante que DataTable mantem foco — necessario pra que Enter
-        # subsequente dispare RowSelected -> on_data_table_row_selected.
+        # Filtro mudou (sessao das marcadas afeta visibilidade). Forca
+        # rebuild zerando signature + chama refresh.
+        self._audit_table_signature = None
+        self._refresh_audit()
+        # Re-foco defensivo da DataTable pra Enter subsequente.
         with contextlib.suppress(Exception):
             dt.focus()
 
@@ -1452,6 +1460,12 @@ class DashboardApp(App):
                     return
             except Exception:
                 pass
+            # Esc na aba Audit sem prompts ativos: limpa marcas (#67-followup-5).
+            # Util pra cancelar montagem de comparison ou desfiltrar a tabela.
+            if self._audit_active() and self._audit_marked:
+                self._clear_marks_and_refresh()
+                event.stop()
+                return
         # Marca interacao do usuario na aba Audit pra pausar auto-scroll.
         # Tecla End tem action propria de retomar — nao trata como pausa.
         if self._audit_active() and event.key not in {"end"}:
