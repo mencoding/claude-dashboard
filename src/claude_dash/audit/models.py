@@ -9,16 +9,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 
 @dataclass(slots=True)
 class AuditEntry:
-    """Uma chamada de tool registrada pelo hook PostToolUse.
+    """Uma chamada de tool registrada pelo hook (Pre/PostToolUse).
 
     Atributos correspondem aos campos STRUCTURED-DATA emitidos pelo
     hook (`[audit@iris ...]`) mais o cabecalho RFC 5424 (timestamp,
     hostname). Tipos sao normalizados: ``timestamp`` vira datetime,
     contadores numericos viram int.
+
+    Campo ``event`` (#50): "start" para PreToolUse (sem duration_ms,
+    output_bytes, status validos — esses dados ainda nao existem),
+    "end" para PostToolUse (formato classico). Default "end" preserva
+    compat com logs pre-#50.
     """
 
     timestamp: datetime
@@ -26,7 +32,7 @@ class AuditEntry:
     session_id: str
     tool: str
     tool_use_id: str
-    status: str  # "success" | "error"
+    status: str  # "success" | "error" (ou "running" pra event=start)
     duration_ms: int
     perm_mode: str
     input_sha: str
@@ -36,3 +42,6 @@ class AuditEntry:
     # PID do processo Claude Code que disparou a tool. Util para
     # correlacionar com transcripts mas nao e exibido na tabela.
     pid: str = ""
+    # #50: evento que originou a entry. "start" e' PreToolUse,
+    # "end" e' PostToolUse. Default "end" mantem retrocompat.
+    event: Literal["start", "end"] = "end"

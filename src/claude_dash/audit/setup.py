@@ -395,6 +395,10 @@ def _wire_settings(plan: Plan, dry_run: bool, mode: str) -> None:
     Em ``fresh``/``partial``: garante que existe uma entry PostToolUse
     matcher ``.*`` apontando para ``claude-dash-audit-hook``, sem mexer
     nas outras.
+
+    #50: tambem garante uma entry PreToolUse equivalente — mesmo binario
+    `claude-dash-audit-hook` distingue Pre vs Post via hook_event_name no
+    payload. Adicao idempotente.
     """
     settings = _load_settings()
     if not isinstance(settings, dict):
@@ -403,6 +407,7 @@ def _wire_settings(plan: Plan, dry_run: bool, mode: str) -> None:
 
     hooks = settings.setdefault("hooks", {})
     pt = hooks.setdefault("PostToolUse", [])
+    pre = hooks.setdefault("PreToolUse", [])
 
     changed = False
     found_new = False
@@ -428,8 +433,27 @@ def _wire_settings(plan: Plan, dry_run: bool, mode: str) -> None:
         })
         changed = True
 
+    # #50: PreToolUse tambem deve apontar pro entry point novo. Idempotente.
+    pre_has_new = any(
+        NEW_HOOK_CMD in (h.get("command", "") or "")
+        for entry in pre
+        for h in (entry.get("hooks") or [])
+    )
+    if not pre_has_new:
+        pre.append({
+            "matcher": ".*",
+            "hooks": [{
+                "type": "command",
+                "command": NEW_HOOK_CMD,
+                "timeout": 5,
+            }],
+        })
+        changed = True
+
     if not changed:
-        plan.actions.append("settings.json: ja wired para claude-dash-audit-hook")
+        plan.actions.append(
+            "settings.json: ja wired para claude-dash-audit-hook (Pre+Post)"
+        )
         return
 
     bak_label = "settings.json.bak.<ts>"

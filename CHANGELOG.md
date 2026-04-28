@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-04-28
+
+### Added
+- **PreToolUse hook (real-time tool tracking).** The `claude-dash-audit-hook` binary now distinguishes `PreToolUse` vs `PostToolUse` via `payload["hook_event_name"]`. PreToolUse emits a syslog line with msgid `TOOLSTART` and `event="start"` *before* the tool executes — before only PostToolUse emitted, so long-running tools (multi-minute Bash, Agent, slow WebFetch) appeared as silence on the Audit tab until they completed. Now they show up immediately as "running" italic-dim rows. When the matching `TOOLCALL` arrives, the row is replaced in-place with the real `dur_ms`/`output_bytes`/`status`. Closes #50.
+- `AuditEntry.event: Literal["start","end"]` field (default `"end"` for backward compatibility with logs predating #50).
+- `views/audit.py:correlate_start_end(entries)` pure function: collapses `start`+`end` pairs by `tool_use_id`, preserving orphan starts (tools still running) and entries without `tool_use_id`.
+- TUI `_populate_audit_table` renders running rows with `italic dim` style + `dur_ms="running..."` + `out="—"`.
+- Filter `status=error` now ignores `event="start"` entries (they have `status="running"` so wouldn't match anyway, but documented explicitly).
+- `setup-audit` wires both `PreToolUse` and `PostToolUse` blocks in `~/.claude/settings.json` (idempotent — re-run to add `PreToolUse` to existing v0.15.x installs).
+
+### Changed
+- Audit log entries now include an explicit `event="end"` field in the STRUCTURED-DATA when emitted by the new hook (was implicit/absent before). Old logs continue to parse correctly — parser defaults `event` to `"end"` when absent.
+- **Volume of audit log doubles.** Each tool call now produces 2 lines (start + end) instead of 1. Logrotate continues at 26-week retention; if you have very high tool throughput, you may want to revisit the rotation policy. Standard usage shouldn't notice.
+
+### Migration
+
+Re-run `claude-dash setup-audit` to wire the `PreToolUse` block (idempotent — won't disturb existing config). New sessions started after the re-run begin emitting both events; old sessions continue with PostToolUse only via cached settings until restarted.
+
 ## [0.15.1] - 2026-04-28
 
 ### Added

@@ -90,3 +90,46 @@ def test_timestamp_parseado_para_datetime() -> None:
     assert e.timestamp.month == 4
     assert e.timestamp.day == 28
     assert e.timestamp.tzinfo is not None
+
+
+# ---- PreToolUse / TOOLSTART (#50) -----------------------------------
+
+
+def test_toolstart_parseado_como_event_start() -> None:
+    """Linha com msgid TOOLSTART -> event=start."""
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLSTART '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="running" '
+        'duration_ms="0" perm_mode="auto" input_sha="0" input_bytes="10" '
+        'output_bytes="0" event="start"]'
+    )
+    e = parse_line(line)
+    assert e is not None
+    assert e.event == "start"
+    assert e.status == "running"
+
+
+def test_toolcall_default_event_end() -> None:
+    """Linha TOOLCALL sem campo event explicito -> event=end (retrocompat)."""
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="success" '
+        'duration_ms="100" perm_mode="auto" input_sha="0" input_bytes="0" '
+        'output_bytes="0"]'
+    )
+    e = parse_line(line)
+    assert e is not None
+    assert e.event == "end"
+
+
+def test_toolcall_com_event_explicito_end() -> None:
+    """Linha TOOLCALL com event=end (formato novo) -> event=end."""
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="success" '
+        'duration_ms="100" perm_mode="auto" input_sha="0" input_bytes="0" '
+        'output_bytes="0" event="end"]'
+    )
+    e = parse_line(line)
+    assert e is not None
+    assert e.event == "end"

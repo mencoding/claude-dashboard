@@ -1,9 +1,13 @@
-"""Hook PostToolUse: registra cada tool call do Claude Code.
+"""Hook PostToolUse + PreToolUse: registra cada tool call do Claude Code.
 
 Entry point ``claude-dash-audit-hook``. Substitui 1:1 o bash legado
-``~/.claude/iris/hooks/audit-tool.sh``. A saida emitida (linha syslog RFC 5424
-no logger e linha de metadata no LOCAL_LOG) e **byte-identica** a do bash
-para o mesmo payload — mudar formato exige mudar o teste de equivalencia.
+``~/.claude/iris/hooks/audit-tool.sh``.
+
+Distingue PreToolUse vs PostToolUse via ``payload["hook_event_name"]`` (#50):
+- ``PreToolUse`` -> linha com msgid ``TOOLSTART`` e ``event="start"``;
+  duration_ms/output_bytes/status sao 0/0/"running" (dado nao existe ainda).
+- ``PostToolUse`` -> linha com msgid ``TOOLCALL`` e ``event="end"`` —
+  byte-identico ao formato classico pra retrocompat.
 
 Fail-silent: qualquer excecao -> ``sys.exit(0)``. Critical: hook NUNCA pode
 quebrar a sessao Claude. Trade-off consciente — prefere-se perder um log a
@@ -81,6 +85,10 @@ def _build_messages(payload: dict) -> tuple[str, str]:
     Retorna ``(full_msg, meta_msg)`` — meta_msg ja inclui o ``\\n`` final
     para append direto no LOCAL_LOG. full_msg vai como argumento do
     ``logger`` (sem trailing newline; logger adiciona).
+
+    PreToolUse (#50): payload["hook_event_name"] == "PreToolUse" ->
+    msgid TOOLSTART + event="start" + status="running" + duration_ms=0
+    + output_bytes=0. Demais campos identicos.
     """
     session_id = payload.get("session_id", "")
     tool_name = payload.get("tool_name", "?")
@@ -91,18 +99,32 @@ def _build_messages(payload: dict) -> tuple[str, str]:
     duration_ms = payload.get("duration_ms", 0)
     perm_mode = payload.get("permission_mode", "")
 
+    # #50: distingue Pre vs Post pela hook_event_name
+    is_pre = payload.get("hook_event_name") == "PreToolUse"
+    msgid = "TOOLSTART" if is_pre else "TOOLCALL"
+    event = "start" if is_pre else "end"
+
     input_serialized = json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
     input_bytes = len(input_serialized.encode("utf-8"))
     input_sha = hashlib.sha256(input_serialized.encode("utf-8")).hexdigest()[:16]
 
-    status = "success"
-    if isinstance(tool_resp, dict) and (tool_resp.get("is_error") or tool_resp.get("error")):
-        status = "error"
-
-    try:
-        output_bytes = len(json.dumps(tool_resp, ensure_ascii=False).encode("utf-8"))
-    except Exception:
+    if is_pre:
+        # PreToolUse nao tem response ainda — campos default.
+        status = "running"
         output_bytes = 0
+        duration_ms = 0
+    else:
+        status = "success"
+        if isinstance(tool_resp, dict) and (
+            tool_resp.get("is_error") or tool_resp.get("error")
+        ):
+            status = "error"
+        try:
+            output_bytes = len(
+                json.dumps(tool_resp, ensure_ascii=False).encode("utf-8"),
+            )
+        except Exception:
+            output_bytes = 0
 
     summary = _summarize(tool_name, tool_input)
     if len(summary.encode("utf-8")) > MAX_INPUT:
@@ -122,6 +144,7 @@ def _build_messages(payload: dict) -> tuple[str, str]:
         f'input_sha="{input_sha}"',
         f'input_bytes="{input_bytes}"',
         f'output_bytes="{output_bytes}"',
+        f'event="{event}"',
     ]
     if tool_name == "Agent":
         subagent_type = (tool_input.get("subagent_type") or "").replace('"', "'")
@@ -130,10 +153,10 @@ def _build_messages(payload: dict) -> tuple[str, str]:
     sd = "[audit@iris " + " ".join(sd_parts) + "]"
 
     full_msg = (
-        f"<134>1 {ts} {hostname} claude-code {pid} TOOLCALL {sd} "
+        f"<134>1 {ts} {hostname} claude-code {pid} {msgid} {sd} "
         f"cwd={cwd!r} {summary}"
     )
-    meta_msg = f"<134>1 {ts} {hostname} claude-code {pid} TOOLCALL {sd}\n"
+    meta_msg = f"<134>1 {ts} {hostname} claude-code {pid} {msgid} {sd}\n"
     return full_msg, meta_msg
 
 

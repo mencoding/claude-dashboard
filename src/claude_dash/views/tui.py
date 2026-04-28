@@ -49,6 +49,9 @@ from claude_dash.discover import (
     subagents_of,
 )
 from claude_dash.views.audit import (
+    correlate_start_end as _audit_correlate,
+)
+from claude_dash.views.audit import (
     default_export_path as _audit_default_export_path,
 )
 from claude_dash.views.audit import (
@@ -596,6 +599,10 @@ class DashboardApp(App):
     def _refresh_audit(self) -> None:
         try:
             all_entries = list(self._audit_entries)
+            # #50: correlaciona start↔end ANTES do filter — quando ambos
+            # existem pra mesmo tool_use_id, end vence (tem dado real).
+            # Entries de start sem end ainda mostram (tool em execucao).
+            all_entries = _audit_correlate(all_entries)
             # Filtro explicito `/host=` tem precedencia sobre o implicit
             # "so este host" (do contrario o usuario nao conseguiria ver
             # outro host sem fazer toggle a cada vez).
@@ -729,14 +736,21 @@ class DashboardApp(App):
             tool_str = e.tool
             if e.subagent_type:
                 tool_str = f"{e.tool}({e.subagent_type})"
+            # #50: tool ainda em execucao — duration_ms invalido,
+            # output_bytes ainda zero. Indica visualmente.
+            is_running = e.event == "start"
+            if is_running:
+                style = "italic dim"
+            dur_str = "running..." if is_running else str(e.duration_ms)
+            out_str = "—" if is_running else _fmt_bytes(e.output_bytes)
             cells = [
-                Text(time_str, style="cyan" if not host_other else "dim"),
+                Text(time_str, style="cyan" if not (host_other or is_running) else "dim"),
                 Text(sess_str, style=style),
                 Text(host_str, style=style),
                 Text(tool_str, style=style),
-                Text(str(e.duration_ms), style=style, justify="right"),
+                Text(dur_str, style=style, justify="right"),
                 Text(_fmt_bytes(e.input_bytes), style=style, justify="right"),
-                Text(_fmt_bytes(e.output_bytes), style=style, justify="right"),
+                Text(out_str, style=style, justify="right"),
             ]
             dt.add_row(*cells)
 
