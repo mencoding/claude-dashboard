@@ -108,7 +108,7 @@ def colored_turn_cost(usd: float) -> str:
     """Versão com thresholds menores, apropriados para custo de um turno.
 
     Thresholds: ($0.50, $1.00) vs. ($10, $50) da sessão — cerca de
-    20× e 50× mais baixos, refletindo que um único turno raramente
+    20x e 50x mais baixos, refletindo que um único turno raramente
     aproxima do custo cumulativo de uma sessão de horas.
     """
     return colored_cost(usd, thresholds=(0.5, 1.0))
@@ -132,7 +132,10 @@ def _tokens_breakdown(s: SessionStats) -> str:
     lines = [
         f"[bold]{_fmt_tokens(total.total)}[/bold]",
         f"[dim]in {_fmt_tokens(total.input_tokens)} / out {_fmt_tokens(total.output_tokens)}[/dim]",
-        f"[dim]cache r {_fmt_tokens(total.cache_read)} / w {_fmt_tokens(total.cache_creation_1h + total.cache_creation_5m)}[/dim]",
+        (
+            f"[dim]cache r {_fmt_tokens(total.cache_read)}"
+            f" / w {_fmt_tokens(total.cache_creation_1h + total.cache_creation_5m)}[/dim]"
+        ),
         f"[dim]/turno {_fmt_tokens(int(per_turn))}[/dim]",
     ]
     return "\n".join(lines)
@@ -252,7 +255,7 @@ def _rate_limit_bar(pct: float, width: int = 14) -> str:
         '[█████░░░░░░░░]'
     """
     pct = max(0.0, min(100.0, pct))
-    filled = int(round(pct / 100 * width))
+    filled = round(pct / 100 * width)
     empty = width - filled
     return "[" + "█" * filled + "░" * empty + "]"
 

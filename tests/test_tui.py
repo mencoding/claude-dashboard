@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from textual.widgets import Static, TabbedContent
 
 from claude_dash.views.tui import DashboardApp
@@ -96,8 +95,9 @@ def test_session_tab_enter_triggers_drill_down() -> None:
             await pilot.press("4")
             await pilot.pause(0.3)
 
-            from claude_dash.views.tui import SessionListItem
             from textual.widgets import ListView
+
+            from claude_dash.views.tui import SessionListItem
 
             list_view = app.query_one("#session-list", ListView)
             session_items = [c for c in list_view.children if isinstance(c, SessionListItem)]

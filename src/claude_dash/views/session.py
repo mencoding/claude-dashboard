@@ -28,13 +28,11 @@ from claude_dash.models import SessionStats, Turn
 from claude_dash.pricing import cost_of
 from claude_dash.views.now import (
     _fmt_duration,
-    _fmt_short_cwd,
     _fmt_tokens,
     _total_cost,
     colored_cost,
     colored_turn_cost,
 )
-
 
 DEFAULT_TIMELINE_TAIL = 20  # últimos N turnos na timeline
 
@@ -85,17 +83,23 @@ def _overview(stats: SessionStats) -> Panel:
 
     lines = Text()
     lines.append("Totais (cumulativos da sessão):\n", style="bold")
-    lines.append(f"  Tokens     ", style="dim")
+    lines.append("  Tokens     ", style="dim")
     lines.append(f"{_fmt_tokens(total.total)}", style="bold")
     lines.append(f"    (in {_fmt_tokens(total.input_tokens)} · ", style="dim")
     lines.append(f"out {_fmt_tokens(total.output_tokens)} · ", style="dim")
     lines.append(f"cache r {_fmt_tokens(total.cache_read)} · ", style="dim")
-    lines.append(f"w {_fmt_tokens(total.cache_creation_1h + total.cache_creation_5m)})\n", style="dim")
-    lines.append(f"  Custo      ", style="dim")
+    lines.append(
+        f"w {_fmt_tokens(total.cache_creation_1h + total.cache_creation_5m)})\n",
+        style="dim",
+    )
+    lines.append("  Custo      ", style="dim")
     lines.append_text(Text.from_markup(f"{colored_cost(cost)}\n"))
-    lines.append(f"  Mensagens  ", style="dim")
-    lines.append(f"{stats.messages_user} user / {stats.messages_assistant} assistant\n", style="bold")
-    lines.append(f"  Subagents  ", style="dim")
+    lines.append("  Mensagens  ", style="dim")
+    lines.append(
+        f"{stats.messages_user} user / {stats.messages_assistant} assistant\n",
+        style="bold",
+    )
+    lines.append("  Subagents  ", style="dim")
     lines.append(f"{stats.subagents}\n", style="bold")
 
     # Modelos usados

@@ -18,6 +18,7 @@ de 50ms (o statusline é chamado múltiplas vezes por interação).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -28,7 +29,6 @@ import time
 from pathlib import Path
 
 from claude_dash.rate_limit_capture import capture_from_json
-
 
 # --- Locais de config --------------------------------------------------
 
@@ -182,10 +182,8 @@ def _detect_effort(transcript_path: str) -> str:
         pass
 
     # Grava cache mesmo se vazio (evita reler)
-    try:
+    with contextlib.suppress(OSError):
         cache_file.write_text(f"{mtime}\n{effort}\n")
-    except OSError:
-        pass
     return effort
 
 
@@ -265,7 +263,8 @@ def render_statusline(data: dict) -> str:
     """Monta a linha de status a partir do JSON do Claude Code.
 
     Ordem dos segmentos (compatível com statusline-dashboard.sh bash):
-        modelo ⚡effort · style · [barra] N% tokens · $custo · duração · +add/-rem · 5h% · 7d% · [sessão]
+        modelo ⚡effort · style · [barra] N% tokens · $custo · duração ·
+        +add/-rem · 5h% · 7d% · [sessão]
     """
     segments: list[str] = []
 
@@ -288,7 +287,7 @@ def render_statusline(data: dict) -> str:
     ctx = data.get("context_window") or {}
     used_pct = ctx.get("used_percentage")
     if used_pct is not None:
-        pct_int = int(round(float(used_pct)))
+        pct_int = round(float(used_pct))
         bar, color = _context_bar(pct_int)
         ctx_seg = f"{BOLD}{color}{bar} {pct_int}%{RESET}"
         input_tokens = (ctx.get("current_usage") or {}).get("input_tokens")
@@ -353,10 +352,8 @@ def main() -> int:
     raw = sys.stdin.read()
 
     # Captura rate_limits em background — nunca falha o statusline
-    try:
+    with contextlib.suppress(Exception):
         capture_from_json(raw)
-    except Exception:  # noqa: BLE001
-        pass
 
     # Wrap: se configurado, usa output do script externo
     wrap_path = _resolve_wrap_path()

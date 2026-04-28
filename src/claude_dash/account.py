@@ -15,7 +15,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DEFAULT_CLAUDE_JSON = Path(os.environ.get("CLAUDE_JSON", Path.home() / ".claude.json"))
 DEFAULT_CREDENTIALS_JSON = Path(os.environ.get(
     "CLAUDE_CREDENTIALS",

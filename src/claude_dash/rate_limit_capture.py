@@ -25,7 +25,6 @@ import sys
 import time
 from pathlib import Path
 
-
 CAPTURE_DIR = Path(os.environ.get(
     "CLAUDE_DASH_RATE_LIMIT_DIR",
     "/tmp/claude-dash-rate-limits",

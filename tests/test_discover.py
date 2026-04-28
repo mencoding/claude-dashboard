@@ -94,7 +94,7 @@ class TestDiscoverTranscripts:
     def test_since_ms_filter(self, tmp_path: Path) -> None:
         import os
         old = _write_transcript(tmp_path, "-ws", "old-sid")
-        new = _write_transcript(tmp_path, "-ws", "new-sid")
+        _write_transcript(tmp_path, "-ws", "new-sid")
         # Força old no passado
         past = 1700000000
         os.utime(old, (past, past))

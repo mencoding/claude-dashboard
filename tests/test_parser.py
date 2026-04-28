@@ -14,7 +14,6 @@ from claude_dash.parser import (
     iter_tool_uses,
 )
 
-
 # --- Fixtures de dados sintéticos ----------------------------------------
 
 

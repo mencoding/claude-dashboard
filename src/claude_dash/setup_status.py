@@ -16,7 +16,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-
 SETTINGS_JSON = Path.home() / ".claude" / "settings.json"
 DASHBOARD_CONFIG = Path.home() / ".claude" / ".claude-dash.json"
 BACKUP_DIR = Path.home() / ".claude" / "backups"
@@ -113,6 +112,6 @@ def run() -> int:
 def main() -> int:
     try:
         return run()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"erro: {exc}", file=sys.stderr)
         return 1
