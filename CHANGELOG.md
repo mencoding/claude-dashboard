@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.9] - 2026-04-28
+
+### Added
+- TUI: aba `Audit` ganhou **multi-select via Space**. Pressionar Space na linha sob o cursor toggla mark — entries marcadas mostram `✓` na nova coluna `Mk` (primeira coluna). Footer status indica `marked=N` quando há marcadas. Pressionar Space numa entry já marcada remove a marca.
+- TUI: tecla **`Enter`** agora dispara ação contextual:
+  - **0-1 marcadas** → drill-down do cursor (mesmo comportamento da tecla `s`).
+  - **2+ marcadas** → comparison cross-session usando os `session_id`s das marcadas (sem precisar do prompt manual de SIDs).
+- TUI: tecla `c` (compare) também aceita marcadas: com 2+ marcadas, compara direto; com 0-1, abre o prompt manual (comportamento antigo).
+- 2 testes novos em `tests/test_audit_view.py` cobrindo `_marked_session_ids` e `_clear_marks_and_refresh`.
+
+### Fixed
+- TUI: bug do auto-tail forçando cursor pra última linha **voltou a aparecer após o split 50/50 da v0.15.8**. O fix anterior dependia exclusivamente do evento `RowHighlighted` do Textual + flag `_audit_cursor_managed`, que tem race condition se o evento chegar atrasado em relação ao próximo tick. Adicionada **segunda linha de defesa determinística**: rastreio de `_audit_last_set_cursor` (posição que setamos no último tick); no tick seguinte, se o cursor está em posição diferente da que registramos, o usuário moveu — marca interação independente de timing de evento. Testes que cobrem o caminho via `pilot.press("up")` continuam verdes.
+
+### Changed
+- DataTable da aba `Audit` agora tem 8 colunas (era 7): nova coluna `Mk` no início, seguida de `time`, `sess`, `host`, `tool`, `dur_ms`, `in`, `out`. `views/audit.py:render_table` (Rich, usado pra rendering shell standalone) permanece com 7 colunas — a `Mk` é exclusiva da TUI.
+- Linha de atalhos in-tab atualizada: `Spc mark`, `Enter/s drill-down`, `c compare`.
+
 ## [0.15.8] - 2026-04-28
 
 ### Added
