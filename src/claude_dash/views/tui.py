@@ -117,6 +117,9 @@ NOW_REFRESH_SEC = 2.0
 AUDIT_REFRESH_SEC = 1.0
 # Cap do ring buffer in-memory de entries do audit
 AUDIT_BUFFER_MAX = 10_000
+# Cap de linhas exibidas na DataTable da aba Audit (cursor mapeia 1:1
+# nesse slice; cache de drill-down precisa estar alinhado).
+AUDIT_TABLE_MAX_ROWS = 500
 # Janelas temporais ciclicas (D1). None = "all".
 AUDIT_WINDOW_CYCLE: tuple[float | None, ...] = (1.0, 24.0, 24.0 * 7, None)
 # Path do audit log (mantem em sync com audit/hook.py).
@@ -530,12 +533,16 @@ class DashboardApp(App):
                 window_hours=self._audit_window_hours,
                 show_test_sessions=self._audit_show_tests,
             )
-            # Cache para drill-down: linha selecionada -> entry corresponde
-            # a `_audit_visible_cache[cursor_row]`.
-            self._audit_visible_cache = visible
+            # Slice EXATO do que vai aparecer na DataTable. Cache armazena
+            # esse slice (NAO a lista cheia) — sem isso, cursor_row da
+            # DataTable nao bate com o indice no cache quando filter
+            # produz mais que AUDIT_TABLE_MAX_ROWS entries (drill-down
+            # selecionaria entry errada — bug v0.14.3).
+            slice_visible = visible[-AUDIT_TABLE_MAX_ROWS:]
+            self._audit_visible_cache = slice_visible
 
             dt = self.query_one("#audit-table", DataTable)
-            self._populate_audit_table(dt, visible)
+            self._populate_audit_table(dt, slice_visible)
             footer = _audit_render_footer(visible)
 
             # Linha de status: filtros ativos + janela + indicador de PAUSED
@@ -581,8 +588,9 @@ class DashboardApp(App):
         if not dt.columns:
             dt.add_columns("time", "sess", "tool", "dur_ms", "in", "out")
 
-        max_rows = 500
-        slice_visible = visible[-max_rows:]
+        # `visible` ja vem capeado pelo chamador (_refresh_audit) em
+        # AUDIT_TABLE_MAX_ROWS. Nao re-slicear pra manter cache alinhado.
+        slice_visible = visible
 
         sig = (
             tuple(sorted(self._audit_filter.items())),
@@ -719,12 +727,14 @@ class DashboardApp(App):
             return
         visible = list(getattr(self, "_audit_visible_cache", []))
         cursor_row = dt.cursor_row
-        if not visible:
+        if not visible or dt.row_count == 0:
             self._update_audit_detail(
                 Text("Nenhuma entry visivel — nada para filtrar.", style="yellow"),
             )
             return
-        if cursor_row < 0 or cursor_row >= len(visible):
+        # Cache deve estar alinhado com a DataTable (ambos sao o mesmo
+        # slice em _refresh_audit). Validar igualdade defensiva.
+        if cursor_row < 0 or cursor_row >= dt.row_count:
             self._update_audit_detail(
                 Text(
                     "Selecione uma linha (setas ↑/↓) antes de pressionar 's'.",
@@ -732,13 +742,26 @@ class DashboardApp(App):
                 ),
             )
             return
-        session_id = visible[cursor_row].session_id
+        if cursor_row >= len(visible):
+            self._update_audit_detail(
+                Text(
+                    "Cache desalinhado com tabela — espera proximo refresh (1s).",
+                    style="yellow",
+                ),
+            )
+            return
+        entry = visible[cursor_row]
+        # Filtra por tool_use_id (unico por chamada) — cada row mostra a
+        # SUA entry especifica. Filtrar por session_id mostraria sempre
+        # o mesmo conteudo pra rows da mesma sessao (bug v0.14.3).
+        # Fallback: algumas entries antigas (Agent sem tool_use_id) usam
+        # session_id como chave de busca, com aviso.
+        filter_key = entry.tool_use_id or entry.session_id
+        filter_label = "tool_use_id" if entry.tool_use_id else "session"
 
-        # Cap em 50 ultimas linhas pra nao sobrecarregar o painel.
-        max_lines = 50
         try:
             with open(AUDIT_SYSTEM_LOG, encoding="utf-8", errors="replace") as f:
-                matching = [line for line in f if session_id in line]
+                matching = [line for line in f if filter_key in line]
         except FileNotFoundError:
             self._update_audit_detail(
                 Text(
@@ -752,7 +775,7 @@ class DashboardApp(App):
                 "[bold yellow]Sem permissao pra ler /var/log/claude/tools.log[/bold yellow]\n"
                 "Adicione seu usuario ao grupo `adm` (re-login depois):\n\n"
                 "  sudo usermod -aG adm $USER\n\n"
-                f"Ou leia manualmente como root:\n  sudo grep {session_id} {AUDIT_SYSTEM_LOG}"
+                f"Ou leia manualmente como root:\n  sudo grep {filter_key} {AUDIT_SYSTEM_LOG}"
             ))
             return
         except Exception as e:
@@ -762,17 +785,25 @@ class DashboardApp(App):
         if not matching:
             self._update_audit_detail(
                 Text(
-                    f"Nenhuma entry para session={session_id} em {AUDIT_SYSTEM_LOG}.",
+                    f"Nenhuma entry para {filter_label}={filter_key} em {AUDIT_SYSTEM_LOG}.",
                     style="dim",
                 ),
             )
             return
 
+        # Cap em 50 ultimas linhas pra nao sobrecarregar (relevante so pro
+        # fallback session_id; tool_use_id deve dar 1 linha so).
+        max_lines = 50
         truncated = len(matching) > max_lines
         shown = matching[-max_lines:]
+        # Header informa qual chave foi usada e o contexto da entry.
+        ts = entry.timestamp.strftime("%H:%M:%S")
         header = (
-            f"[bold]grep {session_id} {AUDIT_SYSTEM_LOG}[/bold]  "
-            f"({len(matching)} linhas{', ultimas ' + str(max_lines) if truncated else ''})\n\n"
+            f"[bold]{ts} {entry.tool}[/bold]  "
+            f"[dim]session={entry.session_id[:8]}…[/dim]\n"
+            f"[bold]grep {filter_key} {AUDIT_SYSTEM_LOG}[/bold]  "
+            f"({len(matching)} linhas"
+            f"{', ultimas ' + str(max_lines) if truncated else ''})\n\n"
         )
         # Text.from_markup interpretaria colchetes do log como markup;
         # constrói Text manual: header em markup, body como texto plano.

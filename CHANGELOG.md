@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.3] - 2026-04-28
+## [0.14.4] - 2026-04-28
+
+### Fixed
+- TUI: `Audit` tab drill-down (`s` key) was filtering by `session_id`, so all rows of the same session showed identical content (looked like "nothing changed" when moving the cursor between Bash/Edit/Read of the same session). Now filters by `tool_use_id` (unique per call) — each row drills into its specific entry. Header gained `HH:MM:SS tool` context. Falls back to `session_id` for legacy entries (e.g., Agent calls without `tool_use_id`).
+- TUI: `_audit_visible_cache` now stores the same slice that's rendered in the `DataTable` (last `AUDIT_TABLE_MAX_ROWS=500` entries) instead of the full filtered list. Previously, `cursor_row` (a DataTable index) was used to index into the full list, picking the wrong entry whenever the filter produced more than 500 results.
+
+### Changed
+- Added `AUDIT_TABLE_MAX_ROWS = 500` constant (was hardcoded inline in `_populate_audit_table`).
 
 ### Changed
 - TUI: `Audit` tab drill-down (`s` key) now reads `/var/log/claude/tools.log` directly instead of going through `pkexec`. The log file is `0640` with group `adm`, and users on Debian-family systems are typically in that group already, so direct read works without any password prompt. Falls back to a helpful message suggesting `sudo usermod -aG adm $USER` for users not in the group. No more Polkit dependency, no more hangs, no more password prompts.
@@ -151,7 +158,8 @@ First stable release.
 - Pricing table validated against the official Anthropic table; Opus correctly priced 3× cheaper than the previous estimate.
 - Cost-band coloring across all views ([#6]).
 
-[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.4...HEAD
+[0.14.4]: https://github.com/mencoding/claude-dashboard/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/mencoding/claude-dashboard/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/mencoding/claude-dashboard/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/mencoding/claude-dashboard/compare/v0.14.0...v0.14.1
