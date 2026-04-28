@@ -279,10 +279,10 @@ class DashboardApp(App):
         Binding("h", "audit_toggle_host", "Toggle host", show=False),
         Binding("c", "audit_compare_action", "Compare", show=False),
         Binding("space", "audit_toggle_mark", "Mark", show=False),
-        # Enter na DataTable e' tratado por on_data_table_row_selected
-        # (Binding('enter') no App nao vence o handler nativo da
-        # DataTable em Textual). Mantido aqui sem binding — o event
-        # handler chama action_audit_enter_action diretamente.
+        # Enter na DataTable e' capturado por on_data_table_row_selected
+        # (event idiomatico). Pra que isso funcione, garantimos foco
+        # na DataTable quando a aba Audit ativa via
+        # on_tabbed_content_tab_activated abaixo.
         Binding("end", "audit_resume_scroll", "Resume", show=False),
     ]
 
@@ -962,8 +962,9 @@ class DashboardApp(App):
     def action_audit_toggle_mark(self) -> None:
         """Tecla `Space`: toggla marca da entry no cursor (#67-followup).
 
-        Marcadas ficam destacadas com ✓ na coluna Mk. Tecla Enter (ou c)
-        com 2+ marcadas dispara comparison; com 0-1 dispara drill-down.
+        Atualiza apenas a celula Mk via update_cell_at — sem rebuild,
+        sem perda de scroll position, sem perda de cursor. Antes
+        forcava full_rebuild que zerava scroll (bug reportado).
         """
         if not self._audit_active():
             return
@@ -982,13 +983,78 @@ class DashboardApp(App):
             return
         if key in self._audit_marked:
             self._audit_marked.discard(key)
+            new_mark = " "
         else:
             self._audit_marked.add(key)
-        # Re-render pra atualizar a celula Mk. _audit_table_signature
-        # nao depende de _audit_marked, entao append-only manteria a
-        # tabela velha; forca rebuild zerando a signature.
-        self._audit_table_signature = None
-        self._refresh_audit()
+            new_mark = "✓"
+        # Update in-place da celula Mk (coluna 0). Preserva scroll +
+        # cursor sem precisar do _audit_table_signature reset.
+        try:
+            from textual.coordinate import Coordinate
+            dt.update_cell_at(
+                Coordinate(cursor_row, 0),
+                Text(new_mark, style="bold yellow", justify="center"),
+            )
+        except Exception:
+            # Fallback se update_cell_at indisponivel: tick proximo
+            # vai sincronizar via _audit_marked state.
+            pass
+        # Atualiza apenas o status line (contador de marcadas).
+        self._update_audit_status_only()
+        # Garante que DataTable mantem foco — necessario pra que Enter
+        # subsequente dispare RowSelected -> on_data_table_row_selected.
+        with contextlib.suppress(Exception):
+            dt.focus()
+
+    def _update_audit_status_only(self) -> None:
+        """Reescreve so o status line da aba Audit (sem mexer na DataTable).
+
+        Util pra quando _audit_marked muda mas a tabela nao precisa
+        de rebuild — preserva scroll e cursor.
+        """
+        try:
+            all_entries = list(self._audit_entries)
+            all_entries = _audit_correlate(all_entries)
+            host_explicit = "host" in self._audit_filter
+            current_host = (
+                CURRENT_HOSTNAME
+                if self._audit_host_only_current and not host_explicit
+                else None
+            )
+            visible = _audit_filter_entries(
+                all_entries,
+                filters=self._audit_filter,
+                window_hours=self._audit_window_hours,
+                show_test_sessions=self._audit_show_tests,
+                current_host=current_host,
+            )
+            footer = _audit_render_footer(visible)
+            status_parts: list[str] = []
+            window_label = _format_window_label(self._audit_window_hours)
+            status_parts.append(f"window={window_label}")
+            if self._audit_filter:
+                fk, fv = next(iter(self._audit_filter.items()))
+                status_parts.append(f"filter:{fk}={fv}")
+            else:
+                status_parts.append("filter=none")
+            if not host_explicit:
+                if self._audit_host_only_current:
+                    status_parts.append(f"host={CURRENT_HOSTNAME}")
+                else:
+                    status_parts.append("host=todos")
+            if self._audit_show_tests:
+                status_parts.append("show-tests=on")
+            n_marked = len(self._audit_marked)
+            if n_marked > 0:
+                status_parts.append(f"[bold yellow]marked={n_marked}[/]")
+            if self._is_audit_paused():
+                status_parts.append("[bold yellow]PAUSED — Press End to resume[/]")
+            status_line = "  •  ".join(status_parts)
+            self.query_one("#audit-status", Static).update(
+                Group(footer, Text.from_markup(status_line)),
+            )
+        except Exception:
+            pass
 
     def action_audit_enter_action(self) -> None:
         """Tecla `Enter`: drill-down ou comparison conforme marcadas (#67-followup).

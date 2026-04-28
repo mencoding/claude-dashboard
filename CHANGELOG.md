@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.11] - 2026-04-28
+
+### Fixed
+- **Drill-down (`s`/Enter) sempre mostrava "Linha invalida" em vermelho.** Causa: `/var/log/claude/tools.log` é escrito pelo rsyslog, que adiciona prefixo próprio (timestamp + tag + `[pid]:`) antes do PRI marker `<134>1 ...`. O regex `_HEADER_RE` em `audit/parser.py` usava `^` ancorando no início da linha, então não casava com a linha rsyslog-prefixada (só com `sessions.log` que é direct-append). Fix: removido o `^` + trocado `re.match()` por `re.search()` — agora encontra o PRI marker em qualquer posição. `parse_full_line` também ajustado para localizar o `]` da SD via `[audit@iris` em vez do primeiro `]` (que era o `[pid]:` do prefixo rsyslog).
+- **Marcar entry com Space scrollava a tabela** (entry marcada virava primeira/última visível). Causa: a action zerava `_audit_table_signature` pra forçar `full_rebuild`, que chama `dt.clear()` e perde scroll position. Fix: substituído rebuild por **`update_cell_at`** atualizando apenas a célula `Mk` da linha do cursor, sem rebuild — preserva scroll, cursor e qualquer outra célula. Status line (`marked=N`) atualizado via novo helper `_update_audit_status_only()`. Re-foco defensivo na DataTable pra garantir que Enter subsequente dispare `RowSelected`.
+- 1 teste novo `test_pilot_press_enter_na_datatable_dispara_compare` reproduz exatamente o caminho do user (pilot.press) e verifica que o handler dispara compare quando há 2+ marcadas.
+
 ## [0.15.10] - 2026-04-28
 
 ### Fixed

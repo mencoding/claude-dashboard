@@ -5,6 +5,14 @@ Le linhas do formato emitido pelo ``audit/hook.py``:
     <134>1 2026-04-28T00:00:29.223-03:00 Predator-PH315-54 claude-code \\
       135727 TOOLCALL [audit@iris session="..." tool="..." status="..." ...]
 
+Aceita tambem linhas com prefixo de rsyslog (formato emitido em
+/var/log/claude/tools.log via syslog template default):
+
+    Apr 28 17:35:47 hostname claude-audit[pid]: <134>1 ... [audit@iris ...]
+
+O parser faz `re.search` pelo PRI marker `<\\d+>1` e parseia daquele
+ponto em diante — ignora qualquer prefixo do rsyslog antes.
+
 Tokens de message-id (#50):
 - ``TOOLCALL``: PostToolUse (event="end", classico)
 - ``TOOLSTART``: PreToolUse (event="start", sem duration_ms/output_bytes/status validos)
@@ -20,11 +28,12 @@ from datetime import datetime
 
 from claude_dash.audit.models import AuditEntry
 
-# Cabecalho ate antes do STRUCTURED-DATA. Captura: prio (descartado),
+# Cabecalho a partir do PRI marker. Captura: prio (descartado),
 # version (descartado), timestamp, hostname, app (descartado), pid,
 # msgid (TOOLCALL ou TOOLSTART pra distinguir end vs start).
+# Sem ancora ^ — usa re.search() pra tolerar prefixo de rsyslog.
 _HEADER_RE = re.compile(
-    r"^<\d+>\d+\s+(\S+)\s+(\S+)\s+\S+\s+(\S+)\s+(\S+)\s+\[audit@iris\s+(.*?)\]"
+    r"<\d+>\d+\s+(\S+)\s+(\S+)\s+\S+\s+(\S+)\s+(\S+)\s+\[audit@iris\s+(.*?)\]"
 )
 
 # Pares chave="valor" dentro do STRUCTURED-DATA. Aceita aspas duplas
@@ -50,7 +59,9 @@ def parse_line(line: str) -> AuditEntry | None:
     if not line or not line.strip():
         return None
 
-    m = _HEADER_RE.match(line.strip())
+    # search() em vez de match() pra tolerar prefixo de rsyslog que
+    # vem antes do PRI marker em /var/log/claude/tools.log.
+    m = _HEADER_RE.search(line.strip())
     if not m:
         return None
 
@@ -128,9 +139,13 @@ def parse_full_line(line: str) -> tuple[AuditEntry | None, dict[str, str]]:
     """
     entry = parse_line(line)
     extra: dict[str, str] = {}
-    bracket = line.find("]")
-    if bracket >= 0 and bracket < len(line) - 1:
-        trailing = line[bracket + 1:].strip()
-        for m in _TRAILING_RE.finditer(trailing):
-            extra[m.group(1)] = m.group(3)
+    # Encontra o `]` da SD, nao do `[pid]:` do prefixo rsyslog.
+    # Ancora pelo `[audit@iris` antes de procurar o fechamento.
+    sd_start = line.find("[audit@iris")
+    if sd_start >= 0:
+        sd_end = line.find("]", sd_start)
+        if sd_end >= 0 and sd_end < len(line) - 1:
+            trailing = line[sd_end + 1:].strip()
+            for m in _TRAILING_RE.finditer(trailing):
+                extra[m.group(1)] = m.group(3)
     return entry, extra
