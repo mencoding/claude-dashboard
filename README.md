@@ -124,7 +124,7 @@ escreve em **dois destinos**, cada um com um propósito distinto:
 
 | Destino | Conteúdo | Permissão | Sync Drive |
 |:---|:---|:---|:---:|
-| `/var/log/claude/tools.log` | **Completo** (cmd, path, url, query até 4 KB) | `syslog:adm 0640` | não |
+| `/var/log/claude/tools.log` | **Completo** (cmd, path, url, query até 4 KB) | `syslog:claude-audit 0640` | não |
 | `~/.claude/iris/audit/sessions.log` | **Metadata-only** (timestamp, session, tool, status, hash, bytes) | `menzani 0600` | sim |
 
 **Threat model.** A motivação foi um incidente de prompt injection
@@ -136,6 +136,28 @@ imune a adulteração pelo próprio Claude. O `sessions.log` em metadata-only
 é syncado para o Drive — timeline cross-device sem vazar `cmd`/`path`/`url`.
 Hook é **fail-silent** (exit 0 sempre) — perda de log preferível a quebra
 de fluxo da sessão.
+
+**Grupo dedicado `claude-audit` (#52).** A partir da v0.15 o
+`/var/log/claude/tools.log` pertence ao grupo `claude-audit` (era `adm`
+até a v0.14.x). Razões:
+
+- **Cross-distro**: `adm` é convenção Debian-family; Fedora/Arch
+  podem não ter ou ter convenção diferente. `claude-audit` é dedicado.
+- **Princípio do menor privilégio**: pertencer ao grupo `claude-audit`
+  dá acesso só ao audit log do Claude, não a `/var/log/` inteiro.
+- **Auditabilidade**: `getent group claude-audit` lista exatamente
+  quem tem visibilidade.
+
+`claude-dash setup-audit` é idempotente — ao re-rodar em uma instância
+v0.14.x existente, o script root cria o grupo, adiciona o invocador
+(`SUDO_USER`) via `usermod -aG`, faz `chown` dos arquivos atuais
+(`tools.log` + `.gz` rotacionados) pra `syslog:claude-audit`, e
+reinicia o `rsyslog`. **Re-login obrigatório** após o upgrade pra novo
+grupo entrar em vigor (ou `newgrp claude-audit` em shell nova).
+
+Pré-requisitos cross-distro: `groupadd`/`usermod` do shadow-utils
+(presente em qualquer distro Linux mainstream); rsyslog com suporte
+a `omfile`/`fileGroup` (default desde rsyslog 7).
 
 **Comportamento cross-device (#55).** Como `sessions.log` é syncado e
 os transcripts JSONL ficam na máquina de origem, ao alternar entre

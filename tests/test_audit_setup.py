@@ -209,7 +209,8 @@ def test_fresh_creates_user_artifacts_and_root_script(tmp_path, monkeypatch, cap
 
     root_script = (tmp_path / "root-setup.sh").read_text()
     assert "mkdir -p /var/log/claude" in root_script
-    assert "chown syslog:adm /var/log/claude" in root_script
+    # #52: chown migrou de syslog:adm pra syslog:claude-audit
+    assert "chown syslog:claude-audit /var/log/claude" in root_script
     assert "/etc/rsyslog.d/30-claude-audit.conf" in root_script
     assert "/etc/logrotate.d/claude-audit" in root_script
     assert "systemctl restart rsyslog" in root_script
@@ -405,3 +406,98 @@ def test_is_compat_shim_helper():
         legacy = td_path / "legacy.sh"
         legacy.write_text("#!/bin/bash\necho old\n")
         assert not au._is_compat_shim(legacy)
+
+
+# ---------------------------------------------------------------------------
+# Grupo claude-audit (#52)
+# ---------------------------------------------------------------------------
+
+def test_claude_audit_group_exists_quando_grupo_resolve(monkeypatch) -> None:
+    """getgrnam retorna struct -> True."""
+    fake_grp = mock.Mock()
+    fake_grp.getgrnam = mock.Mock(return_value=mock.Mock(gr_gid=999))
+    monkeypatch.setattr(
+        "claude_dash.audit.setup._claude_audit_group_exists",
+        lambda: True,
+    )
+    state = au.State()
+    state.claude_audit_group_exists = au._claude_audit_group_exists()
+    # Wrapper re-resolve, monkeypatch acima cobre
+    assert state.claude_audit_group_exists is True
+
+
+def test_claude_audit_group_nao_existe_em_distro_sem_grupo(monkeypatch) -> None:
+    """getgrnam levanta KeyError quando grupo ausente -> False, sem crashar."""
+    import grp as grp_module
+
+    def boom(name: str) -> None:
+        raise KeyError(name)
+
+    monkeypatch.setattr(grp_module, "getgrnam", boom)
+    assert au._claude_audit_group_exists() is False
+    assert au._user_in_claude_audit_group() is False
+
+
+def test_user_in_claude_audit_quando_gid_em_getgroups(monkeypatch) -> None:
+    """getgroups inclui gid do grupo -> True."""
+    import grp as grp_module
+    fake = mock.Mock(gr_gid=4242)
+    monkeypatch.setattr(grp_module, "getgrnam", lambda _name: fake)
+    monkeypatch.setattr(au.os, "getgroups", lambda: [1000, 4242, 27])
+    assert au._user_in_claude_audit_group() is True
+
+
+def test_user_nao_in_claude_audit_quando_gid_fora(monkeypatch) -> None:
+    import grp as grp_module
+    fake = mock.Mock(gr_gid=4242)
+    monkeypatch.setattr(grp_module, "getgrnam", lambda _name: fake)
+    monkeypatch.setattr(au.os, "getgroups", lambda: [1000, 27])
+    assert au._user_in_claude_audit_group() is False
+
+
+def test_var_log_owned_by_claude_audit_false_quando_arquivo_ausente(
+    tmp_path, monkeypatch,
+) -> None:
+    """Sem o arquivo, retorna False sem chamar grp."""
+    monkeypatch.setattr(au, "VAR_LOG_FILE", tmp_path / "missing.log")
+    assert au._var_log_owned_by_claude_audit() is False
+
+
+def test_root_script_inclui_groupadd_e_chown(tmp_path, monkeypatch) -> None:
+    _patch_paths(monkeypatch, tmp_path)
+    body = au._root_setup_script()
+    assert "groupadd -f claude-audit" in body
+    assert "usermod -aG claude-audit" in body
+    assert "chown syslog:claude-audit /var/log/claude" in body
+    assert "chown syslog:claude-audit /var/log/claude/tools.log" in body
+    # Migracao dos rotacionados
+    assert "/var/log/claude/tools.log-*.gz" in body
+    # Aviso sobre re-login
+    assert "newgrp" in body or "re-login" in body
+
+
+def test_print_state_mostra_grupo(tmp_path, monkeypatch, capsys) -> None:
+    """_print_state inclui as 3 linhas novas do grupo."""
+    _patch_paths(monkeypatch, tmp_path)
+    state = au.State()
+    state.claude_audit_group_exists = True
+    state.user_in_claude_audit_group = False
+    state.var_log_owned_by_claude_audit = False
+    au._print_state(state)
+    out = capsys.readouterr().out
+    assert "grupo claude-audit" in out
+    assert "user no grupo" in out
+    assert "tools.log no grupo" in out
+
+
+def test_template_rsyslog_usa_claude_audit() -> None:
+    """Template foi migrado de fileGroup=adm pra fileGroup=claude-audit."""
+    body = au._read_template("rsyslog-30-claude-audit.conf")
+    assert 'fileGroup="claude-audit"' in body
+    assert 'fileGroup="adm"' not in body
+
+
+def test_template_logrotate_usa_claude_audit() -> None:
+    body = au._read_template("logrotate-system-claude-audit")
+    assert "create 0640 syslog claude-audit" in body
+    assert "syslog adm" not in body

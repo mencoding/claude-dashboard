@@ -122,6 +122,12 @@ class State:
     var_log_dir_exists: bool = False
     var_log_file_exists: bool = False
 
+    # #52: grupo dedicado claude-audit (substitui adm pro acesso ao
+    # /var/log/claude/tools.log).
+    claude_audit_group_exists: bool = False
+    user_in_claude_audit_group: bool = False
+    var_log_owned_by_claude_audit: bool = False
+
     def mode(self) -> str:
         """fresh | migrate | partial | installed."""
         any_user = (
@@ -206,7 +212,59 @@ def _detect_state() -> State:
     s.logrotate_sys_exists = LOGROTATE_SYS_CONF.is_file()
     s.var_log_dir_exists = VAR_LOG_DIR.is_dir()
     s.var_log_file_exists = VAR_LOG_FILE.is_file()
+
+    # #52: estado do grupo claude-audit
+    s.claude_audit_group_exists = _claude_audit_group_exists()
+    s.user_in_claude_audit_group = _user_in_claude_audit_group()
+    s.var_log_owned_by_claude_audit = _var_log_owned_by_claude_audit()
     return s
+
+
+# Helpers de detecao do grupo (encapsulados pra mockagem em teste).
+
+CLAUDE_AUDIT_GROUP: str = "claude-audit"
+
+
+def _claude_audit_group_exists() -> bool:
+    """True se grupo `claude-audit` existe no sistema (resolvivel via getgrnam)."""
+    try:
+        import grp
+        grp.getgrnam(CLAUDE_AUDIT_GROUP)
+        return True
+    except (KeyError, ImportError):
+        return False
+
+
+def _user_in_claude_audit_group() -> bool:
+    """True se o usuario atual eh membro de `claude-audit`.
+
+    Le os.getgroups() — reflete grupos do shell em que o claude-dash foi
+    invocado. Importante: usermod -aG so afeta NOVAS sessoes; usuario
+    precisa re-login (ou newgrp) pra grupo entrar em vigor.
+    """
+    try:
+        import grp
+        gid = grp.getgrnam(CLAUDE_AUDIT_GROUP).gr_gid
+        return gid in os.getgroups()
+    except (KeyError, ImportError):
+        return False
+
+
+def _var_log_owned_by_claude_audit() -> bool:
+    """True se /var/log/claude/tools.log tem grupo `claude-audit`.
+
+    Permite distinguir cenario "post-migration completo" de "ainda em adm
+    porque rsyslog nao foi reiniciado" e similar. False quando arquivo
+    nao existe ainda.
+    """
+    if not VAR_LOG_FILE.is_file():
+        return False
+    try:
+        import grp
+        st = VAR_LOG_FILE.stat()
+        return grp.getgrgid(st.st_gid).gr_name == CLAUDE_AUDIT_GROUP
+    except (KeyError, OSError, ImportError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -408,32 +466,51 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# 1. /var/log/claude/ (owner syslog:adm, mode 0750)
+# 1. Grupo dedicado claude-audit (#52)
+# groupadd -f e' idempotente: nao falha se grupo ja existe.
+groupadd -f claude-audit
+
+# Adiciona o usuario invocador ao grupo (sudo conserva SUDO_USER).
+INVOKING_USER="${{SUDO_USER:-${{USER:-root}}}}"
+if [ "$INVOKING_USER" != "root" ]; then
+  usermod -aG claude-audit "$INVOKING_USER"
+  echo "Adicionei '$INVOKING_USER' ao grupo claude-audit."
+  echo "  ATENCAO: efeito so apos re-login (ou 'newgrp claude-audit' em shell nova)."
+fi
+
+# 2. /var/log/claude/ (owner syslog:claude-audit, mode 0750)
 if [ ! -d /var/log/claude ]; then
   mkdir -p /var/log/claude
 fi
-chown syslog:adm /var/log/claude
+chown syslog:claude-audit /var/log/claude
 chmod 0750 /var/log/claude
 
 if [ ! -f /var/log/claude/tools.log ]; then
   touch /var/log/claude/tools.log
 fi
-chown syslog:adm /var/log/claude/tools.log
+chown syslog:claude-audit /var/log/claude/tools.log
 chmod 0640 /var/log/claude/tools.log
 
-# 2. Regra rsyslog
+# Migracao: arquivos rotacionados (.gz) tambem migram pra novo grupo.
+shopt -s nullglob
+for f in /var/log/claude/tools.log-*.gz /var/log/claude/tools.log.[0-9]*; do
+  chown syslog:claude-audit "$f" 2>/dev/null || true
+done
+shopt -u nullglob
+
+# 3. Regra rsyslog
 cat > /etc/rsyslog.d/30-claude-audit.conf <<'RSYSLOG_EOF'
 {rsyslog_body.rstrip()}
 RSYSLOG_EOF
 chmod 0644 /etc/rsyslog.d/30-claude-audit.conf
 
-# 3. Logrotate sistema
+# 4. Logrotate sistema
 cat > /etc/logrotate.d/claude-audit <<'LOGROTATE_EOF'
 {logrotate_body.rstrip()}
 LOGROTATE_EOF
 chmod 0644 /etc/logrotate.d/claude-audit
 
-# 4. Restart rsyslog para aplicar a nova regra
+# 5. Restart rsyslog para aplicar a nova regra
 systemctl restart rsyslog
 
 echo "OK — bootstrap root-mode concluido."
@@ -571,6 +648,9 @@ def _print_state(state: State) -> None:
     print(f"  rsyslog rule        : {yn(state.rsyslog_conf_exists)}")
     print(f"  logrotate sistema   : {yn(state.logrotate_sys_exists)}")
     print(f"  /var/log/claude/    : {yn(state.var_log_dir_exists)}")
+    print(f"  grupo claude-audit  : {yn(state.claude_audit_group_exists)}")
+    print(f"  user no grupo       : {yn(state.user_in_claude_audit_group)}")
+    print(f"  tools.log no grupo  : {yn(state.var_log_owned_by_claude_audit)}")
 
 
 def _print_plan(plan: Plan) -> None:

@@ -941,8 +941,10 @@ class DashboardApp(App):
         except PermissionError:
             self._update_audit_detail(Text.from_markup(
                 "[bold yellow]Sem permissao pra ler /var/log/claude/tools.log[/bold yellow]\n"
-                "Adicione seu usuario ao grupo `adm` (re-login depois):\n\n"
-                "  sudo usermod -aG adm $USER\n\n"
+                "Adicione seu usuario ao grupo `claude-audit` (re-login depois):\n\n"
+                "  claude-dash setup-audit            # gera o script root\n"
+                "  sudo bash /tmp/claude-audit-root-setup.sh\n"
+                "  newgrp claude-audit                # (ou re-login)\n\n"
                 f"Ou leia manualmente como root:\n  sudo grep {filter_key} {AUDIT_SYSTEM_LOG}"
             ))
             return
