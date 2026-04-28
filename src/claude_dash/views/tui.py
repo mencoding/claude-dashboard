@@ -279,7 +279,10 @@ class DashboardApp(App):
         Binding("h", "audit_toggle_host", "Toggle host", show=False),
         Binding("c", "audit_compare_action", "Compare", show=False),
         Binding("space", "audit_toggle_mark", "Mark", show=False),
-        Binding("enter", "audit_enter_action", "Drill/Compare", show=False),
+        # Enter na DataTable e' tratado por on_data_table_row_selected
+        # (Binding('enter') no App nao vence o handler nativo da
+        # DataTable em Textual). Mantido aqui sem binding — o event
+        # handler chama action_audit_enter_action diretamente.
         Binding("end", "audit_resume_scroll", "Resume", show=False),
     ]
 
@@ -825,19 +828,27 @@ class DashboardApp(App):
         self._audit_table_signature = sig
         self._audit_first_visible_key = first_key
 
-        # Cursor: so move pro fim se usuario estava no fim (auto-tail) E
-        # nao houve interacao recente (respeita pausa do D8). Marca a
-        # flag _audit_cursor_managed antes pra que o handler de
-        # RowHighlighted ignore este evento — de outro modo, nosso
-        # proprio movimento programatico seria interpretado como
-        # interacao do usuario e re-pausaria a aba indefinidamente.
-        if (
-            dt.row_count > 0
-            and was_at_end
-            and not self._is_audit_paused()
-        ):
-            self._audit_cursor_managed = True
-            dt.move_cursor(row=dt.row_count - 1, animate=False)
+        # Cursor handling unificado (#67-followup-2):
+        #
+        # 1. auto-tail: se usuario estava no fim E nao houve interacao,
+        #    cursor segue novo fim (mesmo comportamento de antes).
+        # 2. preservacao: caso contrario, restaura cursor pra posicao
+        #    anterior — critico apos full_rebuild, porque dt.clear()
+        #    reseta cursor pra 0 (cenario do bug com Space marking).
+        #
+        # Sem o caminho 2, qualquer rebuild com paused=True jogava cursor
+        # pra primeira linha visivel (bug reportado).
+        if dt.row_count > 0:
+            if was_at_end and not self._is_audit_paused():
+                target = dt.row_count - 1
+            elif full_rebuild and prev_cursor >= 0:
+                # Preserva: clamp em row_count-1 caso dataset encolheu
+                target = min(prev_cursor, dt.row_count - 1)
+            else:
+                target = dt.cursor_row  # nao precisa mexer
+            if target != dt.cursor_row:
+                self._audit_cursor_managed = True
+                dt.move_cursor(row=target, animate=False)
         # Atualiza tracker pro proximo tick comparar (#67-followup).
         # Independente de termos movido, registramos onde o cursor
         # esta agora — proximo tick deteta diff = movimento do usuario.
@@ -1179,6 +1190,23 @@ class DashboardApp(App):
         # Usuário pressionou Enter (ou clicou) numa linha da lista
         if isinstance(event.item, SessionListItem):
             self._render_session_detail(event.item.sid)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter (ou clique) na DataTable da aba Audit (#67-followup-2).
+
+        DataTable do Textual emite RowSelected quando user pressiona Enter.
+        Binding('enter') no App nao vence o handler nativo da DataTable,
+        entao usamos o evento direto. Aqui delega pra mesma logica do
+        action_audit_enter_action: 2+ marcadas -> compare, senao drill-down.
+        """
+        if not self._audit_active():
+            return
+        try:
+            if event.data_table.id != "audit-table":
+                return
+        except Exception:
+            return
+        self.action_audit_enter_action()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Detecta movimento de cursor pelo usuario na tabela de Audit.

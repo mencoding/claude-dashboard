@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.10] - 2026-04-28
+
+### Fixed
+- TUI: marcar uma linha com Space jogava o cursor pra primeira linha visível. Causa: `action_audit_toggle_mark` zera `_audit_table_signature` pra forçar `full_rebuild`, que chama `dt.clear()` e reseta cursor pra 0; a lógica de auto-tail só restaurava cursor pro fim quando `was_at_end + not paused`, mas Space ativa pause, então cursor ficava em 0. Adicionada **preservação explícita de cursor após full_rebuild** — quando o usuário não estava no fim ou está pausado, restaura `prev_cursor` (clamped em `row_count-1`). Cursor agora permanece na linha marcada após Space.
+- TUI: tecla Enter com 2+ entries marcadas não disparava comparison. Causa: `Binding("enter", ...)` no nível do App não vence o handler nativo da `DataTable` em Textual (que captura Enter pra emitir `RowSelected`). Substituído por **event handler `on_data_table_row_selected`** que delega pra `action_audit_enter_action` — caminho idiomático Textual. Enter agora funciona tanto pra drill-down (0-1 marks) quanto pra compare (2+ marks).
+- 1 teste novo `test_enter_com_2plus_marcadas_dispara_compare` cobre o caminho do compare via Enter.
+
 ## [0.15.9] - 2026-04-28
 
 ### Added
