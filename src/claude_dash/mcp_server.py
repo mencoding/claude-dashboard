@@ -114,15 +114,25 @@ def _stats_to_dict(s: SessionStats, *, include_tools_top: int = 5) -> dict[str, 
 
 def _infer_alerts(
     live_stats: list[SessionStats], today_stats: list[SessionStats]
-) -> list[str]:
+) -> list[dict[str, Any]]:
     """Regras simples que transformam dados em "atenção-vale-a-pena".
 
-    Cada alerta é uma frase auto-contida. A ideia é que um agente MCP
-    consultando este servidor saiba o que *investigar*, não só o que
-    *está acontecendo*.
+    Cada alerta e um dict estruturado (#54-d2):
+
+        {
+            "level": "warning"|"critical",
+            "code": "high_turn_tokens"|"idle_session"|"context_full"
+                  | "daily_cost"|"rate_limit_5h"|"rate_limit_7d",
+            "session_id": str|None,  # se aplicavel
+            "message": str,           # human-readable
+            "data": {...},            # dict programaticamente parseavel
+        }
+
+    Agentes podem filtrar por `code` ou `level` sem regex em string.
+    `message` continua existindo pra UI/display.
     """
     now_ms = int(datetime.now().timestamp() * 1000)
-    alerts: list[str] = []
+    alerts: list[dict[str, Any]] = []
 
     def _label(s: SessionStats) -> str:
         # Prefere nome humano (/rename) ao prefixo do UUID para alertas.
@@ -137,28 +147,61 @@ def _infer_alerts(
         # densas" (ex: arquivos longos, loops, output repetitivo). O threshold
         # é em tokens de OUTPUT por turno (não custo direto).
         if s.tokens_per_turn > 300_000 and s.messages_assistant > 3:
-            alerts.append(
-                f"Sessão {_label(s)} com média {int(s.tokens_per_turn):,} "
-                f"output tokens/turno (esperado < 300k): investigar se está "
-                f"gerando arquivos longos ou rodando em loop."
-            )
+            alerts.append({
+                "level": "warning",
+                "code": "high_turn_tokens",
+                "session_id": s.session_id,
+                "message": (
+                    f"Sessão {_label(s)} com média {int(s.tokens_per_turn):,} "
+                    "output tokens/turno (esperado < 300k): investigar se está "
+                    "gerando arquivos longos ou rodando em loop."
+                ),
+                "data": {
+                    "tokens_per_turn": int(s.tokens_per_turn),
+                    "threshold": 300_000,
+                    "messages_assistant": s.messages_assistant,
+                    "session_name": s.session_name,
+                },
+            })
 
         # Sessão parece silenciada mas viva — possível travamento
         if s.last_activity_ms and (now_ms - s.last_activity_ms) > 30 * 60 * 1000:
-            minutes = (now_ms - s.last_activity_ms) // 60_000
-            alerts.append(
-                f"Sessão {_label(s)} (pid {s.pid}) viva mas sem "
-                f"atividade há {minutes} min — pode estar travada, aguardando "
-                f"input do usuário, ou idle."
-            )
+            idle_minutes = (now_ms - s.last_activity_ms) // 60_000
+            alerts.append({
+                "level": "warning",
+                "code": "idle_session",
+                "session_id": s.session_id,
+                "message": (
+                    f"Sessão {_label(s)} (pid {s.pid}) viva mas sem "
+                    f"atividade há {idle_minutes} min — pode estar travada, "
+                    "aguardando input do usuário, ou idle."
+                ),
+                "data": {
+                    "idle_minutes": idle_minutes,
+                    "threshold_minutes": 30,
+                    "pid": s.pid,
+                    "session_name": s.session_name,
+                },
+            })
 
         # Contexto próximo do limite
         ctx = s.active_context_tokens
         if ctx > 150_000:
-            alerts.append(
-                f"Sessão {_label(s)} usando {ctx:,} tokens de contexto ativo "
-                f"— próximo do limite 200k da janela padrão; considerar /compact."
-            )
+            alerts.append({
+                "level": "critical" if ctx > 180_000 else "warning",
+                "code": "context_full",
+                "session_id": s.session_id,
+                "message": (
+                    f"Sessão {_label(s)} usando {ctx:,} tokens de contexto ativo "
+                    "— próximo do limite 200k da janela padrão; considerar /compact."
+                ),
+                "data": {
+                    "active_context_tokens": ctx,
+                    "threshold": 150_000,
+                    "context_window_limit": 200_000,
+                    "session_name": s.session_name,
+                },
+            })
 
     # Custo agregado do dia — sinal de sessão maratônica. Só relevante
     # em billing pay-as-you-go; em assinatura flat-rate o custo em USD
@@ -170,26 +213,57 @@ def _infer_alerts(
             for s in today_stats
         )
         if total_cost_today > 200:
-            alerts.append(
-                f"Consumo agregado do dia: ${total_cost_today:.2f}. Está acima do "
-                f"típico — revise se alguma sessão está em loop."
-            )
+            alerts.append({
+                "level": "warning",
+                "code": "daily_cost",
+                "session_id": None,
+                "message": (
+                    f"Consumo agregado do dia: ${total_cost_today:.2f}. "
+                    "Está acima do típico — revise se alguma sessão está em loop."
+                ),
+                "data": {
+                    "cost_usd": round(total_cost_today, 2),
+                    "threshold_usd": 200.0,
+                },
+            })
 
     # Rate limits — só gera alerta se o hook opcional estiver instalado
     worst_rl = global_worst_case()
     if worst_rl is not None:
         if worst_rl.five_hour_pct >= 85:
-            delta = max(0, worst_rl.five_hour_resets_in_seconds // 60)
-            alerts.append(
-                f"Rate limit 5h em {worst_rl.five_hour_pct:.0f}% — reset em "
-                f"~{delta} min. Sessões pesadas próximas do throttle."
-            )
+            delta_min = max(0, worst_rl.five_hour_resets_in_seconds // 60)
+            alerts.append({
+                "level": "critical" if worst_rl.five_hour_pct >= 95 else "warning",
+                "code": "rate_limit_5h",
+                "session_id": worst_rl.session_id,
+                "message": (
+                    f"Rate limit 5h em {worst_rl.five_hour_pct:.0f}% — "
+                    f"reset em ~{delta_min} min. Sessões pesadas "
+                    "próximas do throttle."
+                ),
+                "data": {
+                    "pct": worst_rl.five_hour_pct,
+                    "threshold_pct": 85,
+                    "resets_in_seconds": worst_rl.five_hour_resets_in_seconds,
+                },
+            })
         if worst_rl.seven_day_pct >= 85:
             days = max(0, worst_rl.seven_day_resets_in_seconds // 86400)
-            alerts.append(
-                f"Rate limit 7d em {worst_rl.seven_day_pct:.0f}% — reset em "
-                f"~{days} dia(s). Consumo semanal perto do limite do plano."
-            )
+            alerts.append({
+                "level": "critical" if worst_rl.seven_day_pct >= 95 else "warning",
+                "code": "rate_limit_7d",
+                "session_id": worst_rl.session_id,
+                "message": (
+                    f"Rate limit 7d em {worst_rl.seven_day_pct:.0f}% — "
+                    f"reset em ~{days} dia(s). Consumo semanal perto "
+                    "do limite do plano."
+                ),
+                "data": {
+                    "pct": worst_rl.seven_day_pct,
+                    "threshold_pct": 85,
+                    "resets_in_seconds": worst_rl.seven_day_resets_in_seconds,
+                },
+            })
 
     return alerts
 

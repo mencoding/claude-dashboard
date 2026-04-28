@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-04-28
+
+### Changed
+- **MCP `_infer_alerts` agora retorna alertas estruturados** (#54-d2). Cada alerta passou de string livre pra dict com campos: `level` (`"warning"` | `"critical"`), `code` (`"high_turn_tokens"` | `"idle_session"` | `"context_full"` | `"daily_cost"` | `"rate_limit_5h"` | `"rate_limit_7d"`), `session_id` (ou `None` quando agregado), `message` (human-readable, mantido pra UI/display), e `data` (dict com os números brutos, parseável por agentes). Agentes podem agora filtrar por `code`/`level` sem regex em string. Schema gravado em `docs/mcp-design.md`. **Breaking pra clientes que iteravam `for s in alerts` esperando string** — em pseudo-código novo: `for a in alerts: print(a["message"])`. Schema version permanece `1` (decisão pragmática: clientes não-estritos que faziam só `for a in alerts: print(a)` veem o `repr` do dict, não bom mas não-quebra).
+- `context_full` agora distingue `level="critical"` (>180k) vs `"warning"` (>150k); `rate_limit_5h`/`rate_limit_7d` distinguem `"critical"` (>=95%) vs `"warning"` (>=85%).
+- 3 testes novos verificam shape estruturado, thresholds de level, lista canônica de codes. 2 testes existentes adaptados pra dict shape.
+
 ## [0.15.4] - 2026-04-28
 
 ### Added
