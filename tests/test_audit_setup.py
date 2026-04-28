@@ -328,8 +328,8 @@ def test_root_uninstall_script_preserves_log():
 # Modo installed: no-op
 # ---------------------------------------------------------------------------
 
-def test_installed_is_noop(tmp_path, monkeypatch, capsys):
-    p = _patch_paths(monkeypatch, tmp_path)
+def _make_installed_state(p: dict) -> None:
+    """Helper: cria estado completo do modo `installed` em tmp_path."""
     settings = {"hooks": {"PostToolUse": [{
         "matcher": ".*",
         "hooks": [{"type": "command", "command": "claude-dash-audit-hook"}],
@@ -350,7 +350,58 @@ def test_installed_is_noop(tmp_path, monkeypatch, capsys):
     au.VAR_LOG_DIR.mkdir(parents=True, exist_ok=True)
     au.VAR_LOG_FILE.touch()
 
+
+def test_installed_is_noop(tmp_path, monkeypatch, capsys):
+    p = _patch_paths(monkeypatch, tmp_path)
+    _make_installed_state(p)
+
     rc = au.main_setup_audit(_args())
     assert rc == 0
     out = capsys.readouterr().out
     assert "Tudo OK" in out
+
+
+def test_installed_silent_when_legacy_hook_is_compat_shim(tmp_path, monkeypatch, capsys):
+    """Issue #49: estado correto (shim instalado) nao deve imprimir aviso."""
+    p = _patch_paths(monkeypatch, tmp_path)
+    _make_installed_state(p)
+    p["legacy_hook"].write_text(au.LEGACY_SHIM_CONTENT)
+
+    rc = au.main_setup_audit(_args())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Tudo OK" in out
+    assert "delete manualmente" not in out
+
+
+def test_installed_reinstalls_shim_when_legacy_bash_present(tmp_path, monkeypatch, capsys):
+    """Issue #49: bash legado em estado `installed` -> instala shim em vez de avisar."""
+    p = _patch_paths(monkeypatch, tmp_path)
+    _make_installed_state(p)
+    # Bash legado de 120 linhas (nao contem 'exec claude-dash-audit-hook')
+    p["legacy_hook"].write_text("#!/bin/bash\n# script legado\necho old\n")
+
+    rc = au.main_setup_audit(_args())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "delete manualmente" not in out
+    # Shim foi instalado: arquivo agora contem o marcador
+    assert au._is_compat_shim(p["legacy_hook"])
+    assert "claude-dash-audit-hook" in p["legacy_hook"].read_text()
+
+
+def test_is_compat_shim_helper():
+    """Helper detecta shim valido vs bash legado vs ausente."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        # Arquivo ausente
+        assert not au._is_compat_shim(td_path / "missing")
+        # Shim valido
+        shim = td_path / "shim.sh"
+        shim.write_text(au.LEGACY_SHIM_CONTENT)
+        assert au._is_compat_shim(shim)
+        # Bash legado
+        legacy = td_path / "legacy.sh"
+        legacy.write_text("#!/bin/bash\necho old\n")
+        assert not au._is_compat_shim(legacy)

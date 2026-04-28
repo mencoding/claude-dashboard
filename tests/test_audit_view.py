@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from textual.widgets import TabbedContent
 
 from claude_dash.audit.models import AuditEntry
 from claude_dash.views.audit import (
+    _EXPORT_FIELDS,
     _color_for,
     _is_test_session,
+    default_export_path,
+    export_entries,
     filter_entries,
     parse_filter_input,
     render_footer,
@@ -274,3 +278,71 @@ def test_todas_abas_sao_acessiveis(key: str) -> None:
             await pilot.press(key)
             await pilot.pause(0.1)
     _run(run())
+
+
+# ---- Export CSV/JSON (#36) -------------------------------------------
+
+
+def test_export_csv_schema_e_roundtrip(tmp_path) -> None:
+    import csv as _csv
+    e1 = _entry(tool="Bash")
+    e2 = _entry(tool="Agent", subagent_type="general-purpose", delta_seconds=5)
+    out = tmp_path / "audit.csv"
+    written = export_entries([e1, e2], "csv", out)
+    assert written == out
+    assert out.is_file()
+
+    with out.open(encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        assert list(reader.fieldnames or []) == list(_EXPORT_FIELDS)
+        rows = list(reader)
+    assert len(rows) == 2
+    # ISO 8601 do timestamp
+    assert rows[0]["timestamp"].startswith("2026-04-28T")
+    # subagent_type=None vira string vazia em CSV
+    assert rows[0]["subagent_type"] == ""
+    assert rows[1]["subagent_type"] == "general-purpose"
+    assert rows[0]["tool"] == "Bash"
+    assert rows[1]["tool"] == "Agent"
+
+
+def test_export_json_schema_e_null_para_subagent_type(tmp_path) -> None:
+    import json as _json
+    e1 = _entry(tool="Bash")
+    e2 = _entry(tool="Agent", subagent_type="general-purpose", delta_seconds=5)
+    out = tmp_path / "audit.json"
+    export_entries([e1, e2], "json", out)
+    data = _json.loads(out.read_text())
+    assert isinstance(data, list) and len(data) == 2
+    # JSON preserva None como null (vs "" do CSV)
+    assert data[0]["subagent_type"] is None
+    assert data[1]["subagent_type"] == "general-purpose"
+    # Schema bate com _EXPORT_FIELDS
+    assert set(data[0].keys()) == set(_EXPORT_FIELDS)
+
+
+def test_export_atomico_nao_deixa_tmp_em_caso_de_sucesso(tmp_path) -> None:
+    out = tmp_path / "audit.csv"
+    export_entries([_entry()], "csv", out)
+    assert out.is_file()
+    assert not (tmp_path / "audit.csv.tmp").exists()
+
+
+def test_export_formato_invalido_levanta() -> None:
+    with pytest.raises(ValueError, match="Formato"):
+        export_entries([_entry()], "xml", Path("/tmp/x.xml"))  # type: ignore[arg-type]
+
+
+def test_default_export_path_inclui_timestamp_iso() -> None:
+    now = datetime(2026, 4, 28, 14, 30, 52)
+    p_csv = default_export_path("csv", now=now)
+    p_json = default_export_path("json", now=now)
+    assert p_csv.name == "audit-export-2026-04-28T143052.csv"
+    assert p_json.name == "audit-export-2026-04-28T143052.json"
+
+
+def test_export_path_nao_gravavel_levanta_oserror(tmp_path) -> None:
+    # Diretorio nao-existente -> OSError no open
+    bad = tmp_path / "no-such-dir" / "out.csv"
+    with pytest.raises(OSError):
+        export_entries([_entry()], "csv", bad)

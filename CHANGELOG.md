@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-04-28
+
+### Added
+- TUI: `Audit` tab gained an `e` key for export. Opens an inline prompt for an output path; empty path defaults to `~/audit-export-<ts>.csv`. Path extension picks format (`.json` → JSON, otherwise CSV). Schema is the same for both formats: `timestamp, hostname, session_id, tool, subagent_type, tool_use_id, status, duration_ms, perm_mode, input_sha, input_bytes, output_bytes, pid`. Writes are atomic via `<path>.tmp` + `os.replace`. Closes #36.
+
+### Fixed
+- `claude-dash setup-audit` in `installed` mode no longer prints the contradictory "delete `audit-tool.sh` manually" warning when the legacy file is already the compat shim installed by v0.14.2 (PR #48). It now detects the shim via the `exec claude-dash-audit-hook` marker and stays silent. If a real legacy bash script is still in place under an otherwise `installed` state, the command auto-installs the shim instead of just complaining. Closes #49.
+
 ## [0.14.4] - 2026-04-28
 
 ### Fixed

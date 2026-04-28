@@ -266,6 +266,23 @@ def _ensure_user_artifacts(plan: Plan, dry_run: bool) -> None:
         _action(plan, f"escrever {SYSTEMD_TIMER}", dry_run, _write_tmr)
 
 
+def _is_compat_shim(path: Path) -> bool:
+    """True se ``path`` ja e' o shim de compat (vs bash legado de 120 linhas).
+
+    Detecta pelo marcador ``exec claude-dash-audit-hook``. Usado por:
+    - ``_install_legacy_shim`` pra short-circuit no caso ja-instalado.
+    - Modo ``installed`` pra decidir entre silenciar o aviso (shim correto)
+      ou re-instalar o shim (bash legado ainda presente).
+    """
+    if not path.is_file():
+        return False
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "claude-dash-audit-hook" in current and "exec" in current
+
+
 def _install_legacy_shim(plan: Plan, dry_run: bool) -> None:
     """Garante que ``~/.claude/iris/hooks/audit-tool.sh`` existe como shim
     delegando pro entry point novo.
@@ -275,13 +292,8 @@ def _install_legacy_shim(plan: Plan, dry_run: bool) -> None:
     1 linha; em ``fresh``: cria do zero pra cobrir sessoes pre-existentes
     que talvez ja tenham configurado audit-tool.sh manualmente).
     """
-    if LEGACY_HOOK.is_file():
-        try:
-            current = LEGACY_HOOK.read_text(encoding="utf-8")
-            if "claude-dash-audit-hook" in current and "exec" in current:
-                return  # Ja eh shim valido — no-op
-        except OSError:
-            pass
+    if _is_compat_shim(LEGACY_HOOK):
+        return
 
     def _write_shim() -> None:
         LEGACY_HOOK.parent.mkdir(parents=True, exist_ok=True)
@@ -603,12 +615,14 @@ def main_setup_audit(args: argparse.Namespace) -> int:
         return 0
 
     if mode == "installed":
+        if state.legacy_hook_file_exists and not _is_compat_shim(LEGACY_HOOK):
+            # Bash legado ainda presente (sessoes pre-migrate). Re-instala
+            # shim pra delegar pro entry point novo. Resto do estado ja OK.
+            print("\nModo: INSTALLED (com bash legado — instalando shim)")
+            _install_legacy_shim(plan, args.dry_run)
+            _print_plan(plan)
+            return 0
         print("\nTudo OK — nada a fazer.")
-        if state.legacy_hook_file_exists:
-            print(
-                f"\nAviso: arquivo legado ainda existe em {LEGACY_HOOK} — "
-                f"delete manualmente apos validar."
-            )
         return 0
 
     print(f"\nModo: {mode.upper()}")
