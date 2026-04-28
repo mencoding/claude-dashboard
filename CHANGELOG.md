@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.12] - 2026-04-28
+
+### Changed
+- TUI: `action_audit_enter_action` agora distingue 3 casos de marcadas em vez de cair silenciosamente em drill-down quando comparison não é possível:
+  1. **2+ marcadas em 2+ sessões distintas** → comparison (caminho normal).
+  2. **2+ marcadas mas todas da mesma sessão** → mensagem amarela explicando: `"N entries marcadas, mas todas da mesma sessao (sid_short…). Comparison exige 2+ sessoes DISTINTAS."`
+  3. **2+ marcadas mas nenhuma no buffer atual** (rotacionaram para fora) → mensagem amarela explicando: `"N entries marcadas, mas nenhuma encontrada no buffer atual (podem ter rotacionado)."`
+  4. **0-1 marcadas** → drill-down do cursor (= tecla `s`, comportamento padrão).
+- Mensagens informativas no painel `#audit-detail` permitem diagnosticar rapidamente quando Enter "não abre compare" — antes caía silenciosamente em drill-down sem indicação do motivo.
+
 ## [0.15.11] - 2026-04-28
 
 ### Fixed
