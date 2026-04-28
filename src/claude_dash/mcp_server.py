@@ -712,6 +712,115 @@ def audit_session_partial(sid: str) -> dict[str, Any]:
     })
 
 
+# --- health (#54-d4) ----------------------------------------------------
+
+
+def _check_rsyslog_active() -> bool | None:
+    """Checa se rsyslog esta ativo via systemctl. None se systemctl ausente."""
+    import shutil
+    import subprocess
+    if shutil.which("systemctl") is None:
+        return None
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-active", "rsyslog"],
+            capture_output=True, text=True, timeout=2, check=False,
+        )
+        return r.stdout.strip() == "active"
+    except Exception:
+        return None
+
+
+def _audit_log_last_entry_age_seconds() -> int | None:
+    """Idade da ultima entry da sessions.log em segundos. None se ausente.
+
+    Le mtime do arquivo — proxy barato. Nao parseia.
+    """
+    if not AUDIT_LOG_PATH.is_file():
+        return None
+    try:
+        mtime = AUDIT_LOG_PATH.stat().st_mtime
+        return max(0, int(datetime.now().timestamp() - mtime))
+    except OSError:
+        return None
+
+
+def _audit_hook_wired() -> bool:
+    """True se settings.json tem hook PostToolUse apontando pro entry novo."""
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.is_file():
+        return False
+    try:
+        import json
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    pt = ((settings.get("hooks") or {}).get("PostToolUse")) or []
+    for entry in pt:
+        for h in entry.get("hooks", []) or []:
+            if "claude-dash-audit-hook" in (h.get("command", "") or ""):
+                return True
+    return False
+
+
+@mcp.tool()
+def dashboard_health() -> dict[str, Any]:
+    """Health check da pipeline do dashboard (#54-d4).
+
+    Util pra agente diagnosticar "minha audit pipeline esta saudavel?"
+    em uma chamada — em vez de combinar account_info + audit_entries +
+    inferencia.
+
+    Returns (Schema):
+        {
+            "_schema_version": 1,
+            "dashboard_version": "...",
+            "rsyslog_active": bool|None,
+                # None = systemctl nao disponivel (container? non-systemd)
+            "audit_hook_wired": bool,
+                # True se settings.json tem PostToolUse -> claude-dash-audit-hook
+            "audit_log_exists": bool,
+            "audit_log_last_entry_age_seconds": int|None,
+                # idade do mtime da sessions.log; None se ausente
+            "audit_log_path": str,
+            "issues": [str, ...],
+                # lista humano-readable do que esta errado; vazia = tudo OK
+        }
+    """
+    rsyslog_active = _check_rsyslog_active()
+    hook_wired = _audit_hook_wired()
+    log_exists = AUDIT_LOG_PATH.is_file()
+    last_age = _audit_log_last_entry_age_seconds()
+
+    issues: list[str] = []
+    if rsyslog_active is False:
+        issues.append("rsyslog inativo — entries em /var/log/claude/ nao serao escritas.")
+    if not hook_wired:
+        issues.append(
+            "Hook PostToolUse nao wired em ~/.claude/settings.json — "
+            "rode `claude-dash setup-audit`."
+        )
+    if not log_exists:
+        issues.append(
+            f"sessions.log nao existe em {AUDIT_LOG_PATH} — "
+            "rode `claude-dash setup-audit` ou disparre uma tool call pra criar."
+        )
+    elif last_age is not None and last_age > 24 * 60 * 60:
+        issues.append(
+            f"sessions.log sem updates ha {last_age // 3600}h — "
+            "hook pode estar quebrado ou sem atividade."
+        )
+
+    return _envelope({
+        "rsyslog_active": rsyslog_active,
+        "audit_hook_wired": hook_wired,
+        "audit_log_exists": log_exists,
+        "audit_log_last_entry_age_seconds": last_age,
+        "audit_log_path": str(AUDIT_LOG_PATH),
+        "issues": issues,
+    })
+
+
 # --- entrypoint ----------------------------------------------------------
 
 

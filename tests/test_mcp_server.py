@@ -6,6 +6,7 @@ monkeypatch nos coletores.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -320,6 +321,75 @@ def test_audit_session_partial_existe(tmp_path) -> None:
     assert result["total_calls"] == 2
     assert result["error_count"] == 1
     assert result["error_rate"] == 0.5
+
+
+# ---- dashboard_health (#54-d4) --------------------------------------
+
+
+def test_dashboard_health_log_inexistente(tmp_path) -> None:
+    """Sem sessions.log, issue lista o problema."""
+    fake = tmp_path / "missing.log"
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", fake):
+        with patch.object(mcp_server, "_check_rsyslog_active", return_value=True):
+            with patch.object(mcp_server, "_audit_hook_wired", return_value=False):
+                result = mcp_server.dashboard_health()
+    assert result["_schema_version"] == 1
+    assert result["audit_log_exists"] is False
+    assert result["audit_log_last_entry_age_seconds"] is None
+    assert any("sessions.log nao existe" in msg for msg in result["issues"])
+    assert any("Hook PostToolUse nao wired" in msg for msg in result["issues"])
+
+
+def test_dashboard_health_tudo_ok(tmp_path) -> None:
+    log = tmp_path / "sessions.log"
+    log.write_text("dummy\n")
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        with patch.object(mcp_server, "_check_rsyslog_active", return_value=True):
+            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
+                result = mcp_server.dashboard_health()
+    assert result["audit_log_exists"] is True
+    assert result["rsyslog_active"] is True
+    assert result["audit_hook_wired"] is True
+    assert result["issues"] == []
+
+
+def test_dashboard_health_rsyslog_inativo(tmp_path) -> None:
+    log = tmp_path / "sessions.log"
+    log.write_text("dummy\n")
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        with patch.object(mcp_server, "_check_rsyslog_active", return_value=False):
+            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
+                result = mcp_server.dashboard_health()
+    assert any("rsyslog inativo" in msg for msg in result["issues"])
+
+
+def test_dashboard_health_log_velho(tmp_path) -> None:
+    """Log com mtime > 24h gera issue."""
+    import os
+    log = tmp_path / "sessions.log"
+    log.write_text("dummy\n")
+    # Mtime 2 dias atras
+    old = datetime.now().timestamp() - 2 * 24 * 3600
+    os.utime(log, (old, old))
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        with patch.object(mcp_server, "_check_rsyslog_active", return_value=True):
+            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
+                result = mcp_server.dashboard_health()
+    assert result["audit_log_last_entry_age_seconds"] >= 24 * 3600
+    assert any("sem updates" in msg for msg in result["issues"])
+
+
+def test_dashboard_health_systemctl_ausente(tmp_path) -> None:
+    """systemctl ausente -> rsyslog_active=None, sem issue de rsyslog."""
+    log = tmp_path / "sessions.log"
+    log.write_text("dummy\n")
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        with patch.object(mcp_server, "_check_rsyslog_active", return_value=None):
+            with patch.object(mcp_server, "_audit_hook_wired", return_value=True):
+                result = mcp_server.dashboard_health()
+    assert result["rsyslog_active"] is None
+    # Issue de rsyslog so se False, nao se None
+    assert not any("rsyslog inativo" in msg for msg in result["issues"])
 
 
 def test_audit_session_partial_nao_existe(tmp_path) -> None:
