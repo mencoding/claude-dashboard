@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.6] - 2026-04-28
+
+### Added
+- TUI: `Audit` tab gained a `c` key for **cross-session comparison** (#38). Opens an inline prompt; user types 2-4 SID prefixes separated by space/comma/semicolon (e.g., `0efd3 a1b2 8f9c`). The audit-detail panel renders parallel columns — one per session — with timestamps, tool calls, and a correlations summary below. Useful when running 3+ Claude Code sessions in parallel and wanting to understand who did what and in what order.
+- Correlation heuristics in new module `claude_dash.views.audit_compare`:
+  - `same_path` / `same_cmd`: same `input_sha` across distinct sessions within ±500ms.
+  - `read_then_edit`: session A read file X at t=0; session B edited X within 5s — classic signal of parallel-refactor race.
+  - All correlations highlighted in `yellow` (or `bold red` for `read_then_edit`) in the comparison view.
+- Pure-function helpers exported: `parse_compare_input(raw)`, `group_by_session(entries, sids)`, `merge_timelines(grouped)`, `find_correlations(grouped, window_ms=500)`. All testable without TUI.
+- 15 new tests in `tests/test_audit_compare.py` covering parsing, grouping, merge ordering, all correlation reasons, edge cases (same session ignored, target-less tools ignored, out-of-window).
+- In-tab key hints line includes `c compare`.
+
 ## [0.15.5] - 2026-04-28
 
 ### Changed
