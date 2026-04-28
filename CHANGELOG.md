@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.6] - 2026-04-28
+
+### Added
+- TUI: `Audit` tab gained a `host` column showing each entry's `hostname`. Default behavior filters entries to the current host (via `socket.gethostname().split('.')[0]`); press `h` to toggle and see all hosts. Entries from a different host are rendered in `dim` style as a visual cue that the original transcript is on another machine. Empty `hostname` (legacy entries pre-#55) always pass — they're treated as "host unknown" rather than hidden. Closes part of #55.
+- TUI: `Audit` tab gained an in-tab key-hint line above the global Footer, listing `/` filter, `t` window, `?` tests, `h` host, `s` drill-down, `e` export, `End` resume. The Audit-specific bindings stay `show=False` in the global Footer (to keep other tabs uncluttered), so this line is the canonical place to discover them.
+- `parse_filter_input` accepts `/host=<name>` as a fourth filter key (prefix-match). When set, the implicit "current host only" toggle is suspended automatically so `/host=PREDATOR` works from any machine. Closes part of #55.
+- Status footer shows `host=<current>` or `host=todos` depending on toggle state, alongside existing `window=`, `filter=`, `show-tests=` indicators.
+- `claude-dash session <sid>` (and the `s` drill-down in the TUI) now has a three-tier response: (1) JSONL local present → full drill-down (unchanged); (2) JSONL absent but metadata exists in `sessions.log` → partial drill-down with `Origem: <hostname>` header, tool-calls table, aggregate of total/errors/duration (no per-turn timeline or per-turn cost — those need JSONL); (3) nothing → clear "Nao existem dados neste host" message instead of the previous misleading "transcript not found". Closes part of #55.
+- New module `claude_dash.audit.partial_stats` with `PartialSessionStats` dataclass and `build_partial_stats_from_audit(sid, audit_log_path=...)` helper. Pure-function, testable in isolation; useful even outside the cross-device case (e.g., when a JSONL has been rotated locally on the origin machine).
+- New constant `claude_dash.audit.CURRENT_HOSTNAME` (resolved at import) for callers that need consistent hostname identification.
+- README "Audit log" section documents the cross-device behavior.
+
+### Fixed
+- TUI: `Audit` tab no longer snaps the cursor back to the latest row at every 1Hz refresh after the user has interacted recently. Auto-tail now respects `_is_audit_paused()` (the `_audit_last_user_action` grace window of `AUDIT_AUTO_SCROLL_GRACE_SEC`), so moving the cursor with ↑/↓ stays put. Press `End` to resume auto-tail explicitly.
+
 ## [0.14.5] - 2026-04-28
 
 ### Added

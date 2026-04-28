@@ -39,6 +39,7 @@ from claude_dash.aggregator import (
     collect_tool_usage_since,
     extract_turns,
 )
+from claude_dash.audit import CURRENT_HOSTNAME
 from claude_dash.audit.models import AuditEntry
 from claude_dash.audit.tail import IncrementalTailer
 from claude_dash.discover import (
@@ -192,6 +193,12 @@ class DashboardApp(App):
         color: $text-muted;
         padding: 0 1;
     }
+    #audit-keys {
+        height: 1;
+        background: $surface;
+        color: $text-muted;
+        padding: 0 1;
+    }
     #audit-filter-input {
         dock: bottom;
         height: 3;
@@ -237,6 +244,7 @@ class DashboardApp(App):
         Binding("question_mark", "audit_toggle_tests", "Toggle tests", show=False),
         Binding("s", "audit_drill_down_root", "Root drill-down", show=False),
         Binding("e", "audit_export_prompt", "Export", show=False),
+        Binding("h", "audit_toggle_host", "Toggle host", show=False),
         Binding("end", "audit_resume_scroll", "Resume", show=False),
     ]
 
@@ -253,6 +261,12 @@ class DashboardApp(App):
         self._audit_filter: dict[str, str] = {}
         self._audit_window_hours: float | None = 24.0
         self._audit_show_tests: bool = False
+        # Filtro implicito por hostname (#55): default = so este host.
+        # Toggle pela tecla `h`. Quando False, mostra tudo (hosts alheios
+        # em dim). Filtro explicito `/host=<name>` em `_audit_filter`
+        # tem precedencia: se ativo, o implicit fica suspenso (do contrario
+        # `/host=PREDATOR` neste host nunca casaria nada).
+        self._audit_host_only_current: bool = True
         # Timestamp (monotonic) da ultima interacao do usuario na aba
         # Audit. Auto-scroll so segue o fundo se passou
         # AUDIT_AUTO_SCROLL_GRACE_SEC sem interacao (D8).
@@ -290,8 +304,15 @@ class DashboardApp(App):
                 yield DataTable(id="audit-table", cursor_type="row", zebra_stripes=True)
                 yield Static(id="audit-detail")
                 yield Static(id="audit-status")
+                # Linha de atalhos especificos da aba — bindings da Audit
+                # estao todos com show=False no Footer global pra nao poluir
+                # as outras abas; aqui sao reapresentados in-line.
+                yield Static(id="audit-keys")
                 yield Input(
-                    placeholder="filtro: /tool=Bash | /error | /session=0efd3 | Esc cancela",
+                    placeholder=(
+                        "filtro: /tool=Bash | /error | /session=0efd3 | "
+                        "/host=PREDATOR | Esc cancela"
+                    ),
                     id="audit-filter-input",
                 )
                 yield Input(
@@ -317,6 +338,7 @@ class DashboardApp(App):
         self._refresh_session_list()
         # Inicializa tailer e renderiza primeiro estado da aba Audit.
         self._audit_tailer = IncrementalTailer(AUDIT_LOG_PATH)
+        self._populate_audit_keys()
         self._refresh_audit()
         # Auto-refresh só da Now (demais via `r` manual). Audit tem
         # ciclo proprio de 1 Hz (tail incremental e barato).
@@ -549,11 +571,21 @@ class DashboardApp(App):
     def _refresh_audit(self) -> None:
         try:
             all_entries = list(self._audit_entries)
+            # Filtro explicito `/host=` tem precedencia sobre o implicit
+            # "so este host" (do contrario o usuario nao conseguiria ver
+            # outro host sem fazer toggle a cada vez).
+            host_explicit = "host" in self._audit_filter
+            current_host = (
+                CURRENT_HOSTNAME
+                if self._audit_host_only_current and not host_explicit
+                else None
+            )
             visible = _audit_filter_entries(
                 all_entries,
                 filters=self._audit_filter,
                 window_hours=self._audit_window_hours,
                 show_test_sessions=self._audit_show_tests,
+                current_host=current_host,
             )
             # Slice EXATO do que vai aparecer na DataTable. Cache armazena
             # esse slice (NAO a lista cheia) — sem isso, cursor_row da
@@ -564,7 +596,7 @@ class DashboardApp(App):
             self._audit_visible_cache = slice_visible
 
             dt = self.query_one("#audit-table", DataTable)
-            self._populate_audit_table(dt, slice_visible)
+            self._populate_audit_table(dt, slice_visible, current_host=current_host)
             footer = _audit_render_footer(visible)
 
             # Linha de status: filtros ativos + janela + indicador de PAUSED
@@ -576,6 +608,13 @@ class DashboardApp(App):
                 status_parts.append(f"filter:{fk}={fv}")
             else:
                 status_parts.append("filter=none")
+            if host_explicit:
+                # Filtro explicito ja exibido em filter:host=...; nada extra.
+                pass
+            elif self._audit_host_only_current:
+                status_parts.append(f"host={CURRENT_HOSTNAME}")
+            else:
+                status_parts.append("host=todos")
             if self._audit_show_tests:
                 status_parts.append("show-tests=on")
             paused = self._is_audit_paused()
@@ -591,24 +630,33 @@ class DashboardApp(App):
                     Text(f"Erro: {e}", style="red"),
                 )
 
-    def _populate_audit_table(self, dt: DataTable, visible: list) -> None:
+    def _populate_audit_table(
+        self,
+        dt: DataTable,
+        visible: list,
+        *,
+        current_host: str | None = None,
+    ) -> None:
         """Atualiza DataTable de forma incremental.
 
         Estrategia:
         - Setup colunas uma vez (no primeiro render)
-        - Calcula signature (filtro+janela+show_tests) e first_key da
-          entry mais antiga visivel
+        - Calcula signature (filtro+janela+show_tests+current_host) e
+          first_key da entry mais antiga visivel
         - Se signature mudou OU first_key mudou (ring buffer rotation,
           filter, etc): full rebuild. Caso contrario: append-only das
           entries novas (preserva cursor sem flicker).
         - Cursor: se usuario estava na ultima linha (auto-tail), segue
           novo fim. Se moveu manualmente, posicao preservada
           automaticamente pelo append-only.
+        - Hostname (#55): coluna `host` mostra `entry.hostname`. Quando
+          `current_host` esta setado e entry e' de outro host, render
+          inteiro vai pra `dim` (sinal: log original em outra maquina).
         """
         from claude_dash.views.audit import _color_for, _fmt_bytes
 
         if not dt.columns:
-            dt.add_columns("time", "sess", "tool", "dur_ms", "in", "out")
+            dt.add_columns("time", "sess", "host", "tool", "dur_ms", "in", "out")
 
         # `visible` ja vem capeado pelo chamador (_refresh_audit) em
         # AUDIT_TABLE_MAX_ROWS. Nao re-slicear pra manter cache alinhado.
@@ -618,6 +666,7 @@ class DashboardApp(App):
             tuple(sorted(self._audit_filter.items())),
             self._audit_window_hours,
             self._audit_show_tests,
+            current_host,
         )
         first_key = (
             slice_visible[0].tool_use_id if slice_visible else None
@@ -641,15 +690,24 @@ class DashboardApp(App):
             entries_to_add = slice_visible[dt.row_count:]
 
         for e in entries_to_add:
-            style = _color_for(e)
+            host_other = (
+                current_host is not None
+                and e.hostname
+                and e.hostname != current_host
+            )
+            # Entry de outro host vence o color-by-tool: queremos sinal
+            # visual claro de que o transcript original nao esta aqui.
+            style = "dim" if host_other else _color_for(e)
             time_str = e.timestamp.strftime("%H:%M:%S.%f")[:-3]
             sess_str = e.session_id[:8] if e.session_id else "-"
+            host_str = e.hostname or "-"
             tool_str = e.tool
             if e.subagent_type:
                 tool_str = f"{e.tool}({e.subagent_type})"
             cells = [
-                Text(time_str, style="cyan"),
+                Text(time_str, style="cyan" if not host_other else "dim"),
                 Text(sess_str, style=style),
+                Text(host_str, style=style),
                 Text(tool_str, style=style),
                 Text(str(e.duration_ms), style=style, justify="right"),
                 Text(_fmt_bytes(e.input_bytes), style=style, justify="right"),
@@ -660,11 +718,43 @@ class DashboardApp(App):
         self._audit_table_signature = sig
         self._audit_first_visible_key = first_key
 
-        # Cursor: so move pro fim se usuario estava no fim (auto-tail).
-        # Caso contrario, preserva posicao (append-only naturalmente
-        # mantem o cursor onde estava).
-        if dt.row_count > 0 and was_at_end:
+        # Cursor: so move pro fim se usuario estava no fim (auto-tail) E
+        # nao houve interacao recente (respeita pausa do D8). Sem o check
+        # de pausa, mover o cursor de volta pra penultima linha era
+        # imediatamente desfeito no proximo tick (1s) — barra visual
+        # "voltava sozinha" pro fim.
+        if (
+            dt.row_count > 0
+            and was_at_end
+            and not self._is_audit_paused()
+        ):
             dt.move_cursor(row=dt.row_count - 1, animate=False)
+
+    def _populate_audit_keys(self) -> None:
+        """Renderiza linha de atalhos da aba Audit no widget #audit-keys.
+
+        Conteudo estatico — populado uma vez no on_mount. Bindings sao
+        os mesmos do BINDINGS (slash/t/?/h/s/e/End) com show=False, que
+        nao apareceriam no Footer global; aqui sao reapresentados in-line
+        so quando a aba Audit esta ativa (CSS oculta o widget nas outras
+        abas via TabPane scoping natural — widget esta dentro do tab-audit).
+        """
+        keys = [
+            ("/", "filter"),
+            ("t", "window"),
+            ("?", "tests"),
+            ("h", "host"),
+            ("s", "drill-down"),
+            ("e", "export"),
+            ("End", "resume"),
+        ]
+        parts = "  ".join(
+            f"[bold cyan]{k}[/bold cyan] {label}" for k, label in keys
+        )
+        with contextlib.suppress(Exception):
+            self.query_one("#audit-keys", Static).update(
+                Text.from_markup(parts),
+            )
 
     def _is_audit_paused(self) -> bool:
         """True se auto-scroll esta pausado (D8)."""
@@ -714,6 +804,18 @@ class DashboardApp(App):
             inp.focus()
         except Exception:
             pass
+
+    def action_audit_toggle_host(self) -> None:
+        """Tecla `h`: toggle entre `host=<atual>` e `host=todos` (#55).
+
+        Toggle nao afeta filtro explicito `/host=<name>` — esse continua
+        valendo enquanto setado, e durante isso o implicit fica suspenso.
+        """
+        if not self._audit_active():
+            return
+        self._audit_host_only_current = not self._audit_host_only_current
+        self._mark_audit_user_action()
+        self._refresh_audit()
 
     def action_audit_export_prompt(self) -> None:
         """Tecla `e`: abre prompt pra exportar entries filtradas (#36).

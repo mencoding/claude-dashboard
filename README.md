@@ -137,6 +137,18 @@ imune a adulteração pelo próprio Claude. O `sessions.log` em metadata-only
 Hook é **fail-silent** (exit 0 sempre) — perda de log preferível a quebra
 de fluxo da sessão.
 
+**Comportamento cross-device (#55).** Como `sessions.log` é syncado e
+os transcripts JSONL ficam na máquina de origem, ao alternar entre
+dispositivos a aba `Audit` filtra entries pelo hostname atual por padrão
+(tecla `h` toggla pra mostrar todos os hosts; `/host=PREDATOR` filtra
+explicitamente). No drill-down (`s` na aba ou `claude-dash session <sid>`):
+
+1. Transcript JSONL local existe → drill-down completo.
+2. Sem JSONL, com metadata na `sessions.log` → drill-down parcial: mostra
+   `Origem: <hostname>`, lista as tool calls e agrega total/erros/duração.
+   Sem timeline de turnos nem custos por turno (só vêm do JSONL).
+3. Nem JSONL nem metadata → mensagem clara `Nao existem dados neste host`.
+
 **Bootstrap em 3 comandos:**
 
 ```bash

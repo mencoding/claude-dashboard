@@ -99,14 +99,22 @@ def filter_entries(
     filters: dict[str, str] | None = None,
     window_hours: float | None = 24.0,
     show_test_sessions: bool = False,
+    current_host: str | None = None,
     now: datetime | None = None,
 ) -> list[AuditEntry]:
-    """Aplica todos os filtros (D4 + D7 + janela temporal).
+    """Aplica todos os filtros (D4 + D7 + janela temporal + host).
 
-    Filtros suportados (uma key por vez, conforme D4):
+    Filtros suportados (uma key por vez no dict ``filters``, conforme D4):
     - ``tool``: match exato no nome da tool
     - ``status``: match exato (geralmente "error")
     - ``session_prefix``: prefix-match no session_id
+    - ``host``: prefix-match no hostname (#55)
+
+    Parametro extra ``current_host``: quando nao-None, aplica filtro
+    "so este host" alem de qualquer ``host=`` explicito em ``filters``.
+    Entries com ``hostname`` vazio (logs antigos pre-#55) sao incluidas
+    como "sem host conhecido" — nao queremos esconder dado historico
+    legitimo so porque o campo nao foi populado.
     """
     filters = filters or {}
     if now is None:
@@ -131,6 +139,10 @@ def filter_entries(
             filters["session_prefix"]
         ):
             continue
+        if "host" in filters and not e.hostname.startswith(filters["host"]):
+            continue
+        if current_host is not None and e.hostname and e.hostname != current_host:
+            continue
         out.append(e)
     return out
 
@@ -144,11 +156,20 @@ def _fmt_bytes(n: int) -> str:
     return f"{n / (1024 * 1024):.1f}M"
 
 
-def render_table(entries: list[AuditEntry], *, max_rows: int = 500) -> Table:
+def render_table(
+    entries: list[AuditEntry],
+    *,
+    max_rows: int = 500,
+    current_host: str | None = None,
+) -> Table:
     """Renderiza Rich Table das entries (ja filtradas).
 
     Mostra so as ultimas ``max_rows`` para evitar custo de render em
     listas gigantes (Rich Table nao virtualiza).
+
+    ``current_host`` (#55): quando nao-None, hostname diferente do atual
+    e' renderizado em ``dim`` pra sinalizar que o transcript original esta
+    em outra maquina. None desabilita o styling diferenciado (todos iguais).
     """
     table = Table(
         expand=True,
@@ -159,6 +180,7 @@ def render_table(entries: list[AuditEntry], *, max_rows: int = 500) -> Table:
     )
     table.add_column("time", style="cyan", no_wrap=True, width=12)
     table.add_column("sess", no_wrap=True, width=8)
+    table.add_column("host", no_wrap=True, width=10)
     table.add_column("tool", no_wrap=True)
     table.add_column("dur_ms", justify="right", no_wrap=True, width=8)
     table.add_column("in", justify="right", no_wrap=True, width=7)
@@ -166,15 +188,24 @@ def render_table(entries: list[AuditEntry], *, max_rows: int = 500) -> Table:
 
     visible = entries[-max_rows:]
     for e in visible:
-        style = _color_for(e)
+        # Se entry e' de outro host, vence o styling de tool (drill-down
+        # cross-device e' info mais saliente que o tipo da tool).
+        host_other = (
+            current_host is not None
+            and e.hostname
+            and e.hostname != current_host
+        )
+        style = "dim" if host_other else _color_for(e)
         time_str = e.timestamp.strftime("%H:%M:%S.%f")[:-3]
         sess_str = e.session_id[:8] if e.session_id else "-"
+        host_str = e.hostname or "-"
         tool_str = e.tool
         if e.subagent_type:
             tool_str = f"{e.tool}({e.subagent_type})"
         table.add_row(
             time_str,
             sess_str,
+            host_str,
             tool_str,
             str(e.duration_ms),
             _fmt_bytes(e.input_bytes),
@@ -278,4 +309,6 @@ def parse_filter_input(raw: str) -> dict[str, str]:
         return {"status": value}
     if key == "session":
         return {"session_prefix": value}
+    if key == "host":
+        return {"host": value}
     return {}
