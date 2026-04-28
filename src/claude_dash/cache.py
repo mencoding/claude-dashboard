@@ -95,6 +95,7 @@ def deserialize_stats(d: dict) -> SessionStats:
         messages_assistant=int(d.get("messages_assistant") or 0),
         subagents=int(d.get("subagents") or 0),
         last_usage=last_usage,
+        session_name=d.get("session_name") or None,
     )
 
 
