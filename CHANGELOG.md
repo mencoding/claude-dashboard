@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.14] - 2026-04-28
+
+### Fixed
+- TUI: Enter não disparava compare quando o usuário marcava entries de TODAS as sessões disponíveis no buffer. Causa arquitetural: a regra de filtragem progressiva da v0.15.13 escondia a sessão **inteira** das entries marcadas, deixando a tabela vazia quando todas as sessões eram marcadas. DataTable vazia não emite `RowSelected` no Enter (não há cursor row válido), então `on_data_table_row_selected` nunca era chamado.
+- **Nova regra de filtragem (refinamento da v0.15.13):** ao marcar entry, escondem-se as **outras** entries da mesma session_id, mas a **própria entry marcada permanece visível** (com `✓`). Garante que a tabela nunca fica vazia mesmo no caso extremo de marcar todas as sessões — Enter sempre tem cursor row válido pra disparar.
+- Bonus de UX: as entries marcadas com `✓` ficam visíveis confirmando o que está no batch — antes sumiam após Space.
+- 1 teste novo `test_marks_em_todas_as_sessoes_mantem_marcadas_visiveis` cobre o edge case (buffer com 2 entries, ambas marcadas, Enter dispara compare). Teste existente atualizado pra refletir nova regra.
+
 ## [0.15.13] - 2026-04-28
 
 ### Added

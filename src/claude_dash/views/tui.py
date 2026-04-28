@@ -670,15 +670,25 @@ class DashboardApp(App):
                 show_test_sessions=self._audit_show_tests,
                 current_host=current_host,
             )
-            # #67-followup-5: filtro progressivo de marcacao. Quando o
-            # usuario marca uma entry (Space), a tabela esconde TODAS
-            # as entries dessa session_id — o foco vai pras sessoes
-            # ainda nao marcadas, ergonomico pra montar comparison
-            # cross-session sem precisar caçar SIDs distintos. Esc
-            # limpa marcas e restaura a view completa.
+            # #67-followup-6: filtro progressivo de marcacao. Quando o
+            # usuario marca uma entry (Space), a tabela esconde as outras
+            # entries da mesma session_id — MAS mantem a propria entry
+            # marcada visivel (com ✓). Foco vai pras sessoes nao-marcadas,
+            # ergonomico pra montar comparison cross-session.
+            #
+            # Manter a marcada visivel resolve o caso extremo: usuario
+            # marcou todas as sessoes do buffer; antes a tabela ficava
+            # vazia e Enter nao disparava (DataTable sem rows nao emite
+            # RowSelected). Agora as marcadas continuam la, Enter funciona.
+            #
+            # Esc limpa marcas e restaura a view completa.
             marked_sids = self._marked_session_ids()
             if marked_sids:
-                visible = [e for e in visible if e.session_id not in marked_sids]
+                visible = [
+                    e for e in visible
+                    if e.session_id not in marked_sids
+                    or (e.tool_use_id or e.session_id) in self._audit_marked
+                ]
             # Slice EXATO do que vai aparecer na DataTable. Cache armazena
             # esse slice (NAO a lista cheia) — sem isso, cursor_row da
             # DataTable nao bate com o indice no cache quando filter
