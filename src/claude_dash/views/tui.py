@@ -20,6 +20,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import (
+    DataTable,
     Footer,
     Header,
     Input,
@@ -54,9 +55,6 @@ from claude_dash.views.audit import (
 )
 from claude_dash.views.audit import (
     render_footer as _audit_render_footer,
-)
-from claude_dash.views.audit import (
-    render_table as _audit_render_table,
 )
 from claude_dash.views.now import (
     _header as _now_header,
@@ -174,7 +172,6 @@ class DashboardApp(App):
     #audit-table {
         border: solid $primary;
         height: 70%;
-        overflow-y: auto;
     }
     #audit-detail {
         height: 1fr;
@@ -206,6 +203,12 @@ class DashboardApp(App):
         Binding("5", "show_tab('tab-audit')", "Audit"),
         Binding("r", "refresh_current", "Refresh"),
         Binding("q", "quit", "Quit"),
+        # Setas trocam tabs no nivel App (sem priority — DataTable consome
+        # ←/→ pra navegacao de coluna, e Input do filter consome pra editar
+        # texto; nesses casos o widget vence e setas nao trocam tab, o que
+        # e o comportamento certo).
+        Binding("left", "previous_tab", "Prev tab", show=False),
+        Binding("right", "next_tab", "Next tab", show=False),
         # Ctrl+C fecha direto (convenção de terminal). Sobrescreve o popup
         # padrão do Textual que sugere Ctrl+D — preferimos comportamento
         # SIGINT clássico, já que `q` continua disponível como atalho seguro.
@@ -239,6 +242,15 @@ class DashboardApp(App):
         # Quando True, indica explicitamente que o usuario esta com o
         # scroll pausado (tipicamente apos scroll-up). Resetado pelo End.
         self._audit_paused: bool = False
+        # Cache da lista filtrada visivel: drill-down `s` mapea
+        # cursor_row -> entry. Atualizado a cada _refresh_audit.
+        self._audit_visible_cache: list = []
+        # Render incremental: tracking pra evitar full rebuild a cada tick.
+        # Signature do filtro (filter+window+show_tests): se mudar, rebuild.
+        self._audit_table_signature: tuple | None = None
+        # Key da primeira entry visivel (tool_use_id): se mudar (ring
+        # buffer ou filter), rebuild.
+        self._audit_first_visible_key: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -257,7 +269,7 @@ class DashboardApp(App):
                 yield ListView(id="session-list")
                 yield Static(id="session-detail")
             with TabPane("Audit (5)", id="tab-audit"), Vertical():
-                yield Static(id="audit-table", expand=True)
+                yield DataTable(id="audit-table", cursor_type="row", zebra_stripes=True)
                 yield Static(id="audit-detail")
                 yield Static(id="audit-status")
                 yield Input(
@@ -297,20 +309,47 @@ class DashboardApp(App):
         globais da App e o Selected nunca dispara. Resultado: usuário
         vê os itens navegáveis por seta mas não consegue selecionar.
         """
+        # Defer o focus pra DEPOIS do refresh: chamar focus() direto no
+        # handler pode falhar silenciosamente se o tab pane ainda nao esta
+        # visualmente pronto. call_after_refresh garante que roda apos o
+        # ciclo de render, com o widget ja montado e visivel.
         if event.pane.id == "tab-session":
-            try:
-                list_view = self.query_one("#session-list", ListView)
-                if len(list_view.children) > 0 and list_view.index is None:
-                    list_view.index = 0
-                list_view.focus()
-            except Exception:
-                pass
+            self.call_after_refresh(self._focus_session_list)
+        elif event.pane.id == "tab-audit":
+            self.call_after_refresh(self._focus_audit_table)
+
+    def _focus_session_list(self) -> None:
+        with contextlib.suppress(Exception):
+            self.query_one("#session-list", ListView).focus()
+
+    def _focus_audit_table(self) -> None:
+        with contextlib.suppress(Exception):
+            self.query_one("#audit-table", DataTable).focus()
 
     # ----- Actions -------------------------------------------------------
+
+    # Ordem das abas pro ciclo ←/→.
+    _TAB_ORDER = ("tab-now", "tab-today", "tab-tools", "tab-session", "tab-audit")
 
     def action_show_tab(self, tab_id: str) -> None:
         tc = self.query_one(TabbedContent)
         tc.active = tab_id
+
+    def action_previous_tab(self) -> None:
+        tc = self.query_one(TabbedContent)
+        try:
+            idx = self._TAB_ORDER.index(tc.active)
+        except ValueError:
+            return
+        tc.active = self._TAB_ORDER[(idx - 1) % len(self._TAB_ORDER)]
+
+    def action_next_tab(self) -> None:
+        tc = self.query_one(TabbedContent)
+        try:
+            idx = self._TAB_ORDER.index(tc.active)
+        except ValueError:
+            return
+        tc.active = self._TAB_ORDER[(idx + 1) % len(self._TAB_ORDER)]
 
     def action_refresh_current(self) -> None:
         """Re-renderiza o conteúdo da aba atualmente ativa."""
@@ -422,12 +461,6 @@ class DashboardApp(App):
         for sid, label in entries:
             list_view.append(SessionListItem(sid=sid, label=label))
 
-        # Garante que há um item "current" desde o primeiro render —
-        # sem isso, Enter num ListView recém-populado não dispara
-        # Selected porque não há índice focado.
-        if list_view.index is None:
-            list_view.index = 0
-
     def _render_session_detail(self, sid: str) -> None:
         """Chamado quando o usuário seleciona um SID na lista."""
         try:
@@ -498,10 +531,13 @@ class DashboardApp(App):
                 window_hours=self._audit_window_hours,
                 show_test_sessions=self._audit_show_tests,
             )
-            table = _audit_render_table(visible)
-            footer = _audit_render_footer(visible)
+            # Cache para drill-down: linha selecionada -> entry corresponde
+            # a `_audit_visible_cache[cursor_row]`.
+            self._audit_visible_cache = visible
 
-            self.query_one("#audit-table", Static).update(table)
+            dt = self.query_one("#audit-table", DataTable)
+            self._populate_audit_table(dt, visible)
+            footer = _audit_render_footer(visible)
 
             # Linha de status: filtros ativos + janela + indicador de PAUSED
             status_parts: list[str] = []
@@ -521,18 +557,85 @@ class DashboardApp(App):
 
             status_widget = self.query_one("#audit-status", Static)
             status_widget.update(Group(footer, Text.from_markup(status_line)))
-
-            # Auto-scroll: se nao pausado, vai pra o fundo do container
-            # de tabela. Rich Static scrolla container; scrollable=true
-            # via CSS overflow-y: auto ja esta setado.
-            if not paused:
-                with contextlib.suppress(Exception):
-                    self.query_one("#audit-table", Static).scroll_end(animate=False)
         except Exception as e:
             with contextlib.suppress(Exception):
-                self.query_one("#audit-table", Static).update(
-                    Panel(Text(f"Erro: {e}", style="red"), title="Audit", border_style="red")
+                self.query_one("#audit-status", Static).update(
+                    Text(f"Erro: {e}", style="red"),
                 )
+
+    def _populate_audit_table(self, dt: DataTable, visible: list) -> None:
+        """Atualiza DataTable de forma incremental.
+
+        Estrategia:
+        - Setup colunas uma vez (no primeiro render)
+        - Calcula signature (filtro+janela+show_tests) e first_key da
+          entry mais antiga visivel
+        - Se signature mudou OU first_key mudou (ring buffer rotation,
+          filter, etc): full rebuild. Caso contrario: append-only das
+          entries novas (preserva cursor sem flicker).
+        - Cursor: se usuario estava na ultima linha (auto-tail), segue
+          novo fim. Se moveu manualmente, posicao preservada
+          automaticamente pelo append-only.
+        """
+        from claude_dash.views.audit import _color_for, _fmt_bytes
+
+        if not dt.columns:
+            dt.add_columns("time", "sess", "tool", "dur_ms", "in", "out")
+
+        max_rows = 500
+        slice_visible = visible[-max_rows:]
+
+        sig = (
+            tuple(sorted(self._audit_filter.items())),
+            self._audit_window_hours,
+            self._audit_show_tests,
+        )
+        first_key = (
+            slice_visible[0].tool_use_id if slice_visible else None
+        )
+        full_rebuild = (
+            sig != self._audit_table_signature
+            or first_key != self._audit_first_visible_key
+            or len(slice_visible) < dt.row_count
+        )
+
+        prev_cursor = dt.cursor_row
+        prev_count = dt.row_count
+        was_at_end = prev_count == 0 or prev_cursor >= prev_count - 1
+
+        if full_rebuild:
+            dt.clear()
+            entries_to_add = slice_visible
+        else:
+            # Append-only: adiciona soh entries que ainda nao estao na
+            # tabela (do indice atual em diante).
+            entries_to_add = slice_visible[dt.row_count:]
+
+        for e in entries_to_add:
+            style = _color_for(e)
+            time_str = e.timestamp.strftime("%H:%M:%S.%f")[:-3]
+            sess_str = e.session_id[:8] if e.session_id else "-"
+            tool_str = e.tool
+            if e.subagent_type:
+                tool_str = f"{e.tool}({e.subagent_type})"
+            cells = [
+                Text(time_str, style="cyan"),
+                Text(sess_str, style=style),
+                Text(tool_str, style=style),
+                Text(str(e.duration_ms), style=style, justify="right"),
+                Text(_fmt_bytes(e.input_bytes), style=style, justify="right"),
+                Text(_fmt_bytes(e.output_bytes), style=style, justify="right"),
+            ]
+            dt.add_row(*cells)
+
+        self._audit_table_signature = sig
+        self._audit_first_visible_key = first_key
+
+        # Cursor: so move pro fim se usuario estava no fim (auto-tail).
+        # Caso contrario, preserva posicao (append-only naturalmente
+        # mantem o cursor onde estava).
+        if dt.row_count > 0 and was_at_end:
+            dt.move_cursor(row=dt.row_count - 1, animate=False)
 
     def _is_audit_paused(self) -> bool:
         """True se auto-scroll esta pausado (D8)."""
@@ -606,22 +709,28 @@ class DashboardApp(App):
         if not self._audit_active():
             return
         self._mark_audit_user_action()
-        # Tenta pegar a sessao da entry mais recente visivel; sem isso
-        # nao tem o que filtrar.
-        all_entries = list(self._audit_entries)
-        visible = _audit_filter_entries(
-            all_entries,
-            filters=self._audit_filter,
-            window_hours=self._audit_window_hours,
-            show_test_sessions=self._audit_show_tests,
-        )
+        # Usa a linha SELECIONADA (cursor da DataTable), nao a ultima visivel.
+        # Sem cursor selecionado, instrui o usuario.
+        try:
+            dt = self.query_one("#audit-table", DataTable)
+        except Exception:
+            return
+        visible = list(getattr(self, "_audit_visible_cache", []))
+        cursor_row = dt.cursor_row
         if not visible:
             self._update_audit_detail(
-                Text("Nenhuma entry visivel — nao tem session_id pra filtrar.",
-                     style="yellow"),
+                Text("Nenhuma entry visivel — nada para filtrar.", style="yellow"),
             )
             return
-        session_id = visible[-1].session_id
+        if cursor_row < 0 or cursor_row >= len(visible):
+            self._update_audit_detail(
+                Text(
+                    "Selecione uma linha (setas ↑/↓) antes de pressionar 's'.",
+                    style="yellow",
+                ),
+            )
+            return
+        session_id = visible[cursor_row].session_id
         # Placeholder imediato: usuario ve feedback enquanto Polkit pede
         # senha. Sem isso, pareceria que a tecla `s` nao fez nada.
         self._update_audit_detail(
@@ -646,12 +755,25 @@ class DashboardApp(App):
         (obrigatorio quando atualiza widget da thread principal).
         """
         try:
+            # `--disable-internal-agent`: forca usar agente Polkit grafico
+            # (polkit-gnome/-mate). Sem isso, o pkexec cai em fallback
+            # texto que tenta ler senha do TTY — mas o Textual ja monopoliza
+            # o TTY, entao trava indefinidamente.
+            # `stdin=DEVNULL` + `start_new_session=True`: desconecta o
+            # subprocess do controlling terminal do Textual, evitando
+            # qualquer tentativa de ler senha pelo TTY.
+            # timeout 60s: usuario pode demorar pra responder o prompt.
             result = subprocess.run(
-                ["pkexec", "grep", session_id, AUDIT_SYSTEM_LOG],
+                [
+                    "pkexec", "--disable-internal-agent",
+                    "grep", session_id, AUDIT_SYSTEM_LOG,
+                ],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=60,
                 check=False,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
             )
             if result.returncode == 0:
                 body = (
@@ -659,6 +781,16 @@ class DashboardApp(App):
                     + (result.stdout or "(saida vazia)")
                 )
                 content = Text.from_markup(body)
+            elif result.returncode == 127:
+                # 127 = no authentication agent found
+                content = Text.from_markup(
+                    "[bold yellow]Nenhum agente Polkit grafico ativo.[/bold yellow]\n"
+                    "Inicie um (ex.: gnome ou mate) e tente de novo:\n\n"
+                    "  /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &\n"
+                    "  # ou\n"
+                    "  /usr/libexec/polkit-mate-authentication-agent-1 &\n\n"
+                    f"Ou rode manualmente:\n  sudo grep {session_id} {AUDIT_SYSTEM_LOG}"
+                )
             else:
                 err = result.stderr.strip() or f"exit {result.returncode}"
                 content = Text(
@@ -673,7 +805,10 @@ class DashboardApp(App):
                 style="yellow",
             )
         except subprocess.TimeoutExpired:
-            content = Text("pkexec timeout (>10s). Tente novamente.", style="red")
+            content = Text(
+                "pkexec timeout (>60s). Cancelou ou nao respondeu o prompt?",
+                style="red",
+            )
         except Exception as e:
             content = Text(f"Erro: {e}", style="red")
         self.call_from_thread(self._update_audit_detail, content)

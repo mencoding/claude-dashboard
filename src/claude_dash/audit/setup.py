@@ -57,6 +57,22 @@ VAR_LOG_FILE = Path("/var/log/claude/tools.log")
 NEW_HOOK_CMD = "claude-dash-audit-hook"
 LEGACY_HOOK_CMD_FRAGMENT = "audit-tool.sh"
 
+# Conteudo do shim de compat que substitui o audit-tool.sh legado.
+# Necessario porque o Claude Code lê settings.json *uma vez no startup* da
+# sessao e cacheia o path do hook em memoria. Sessoes abertas ANTES do
+# `setup-audit migrate` continuariam invocando ~/.claude/iris/hooks/audit-tool.sh
+# pelo path cacheado. Se simplesmente trocassemos settings.json e deletassemos
+# o arquivo, todas as tool calls dessas sessoes virariam fail silent ate
+# restart. O shim mantem o path estavel e delega pro entry point novo.
+LEGACY_SHIM_CONTENT = """\
+#!/usr/bin/env bash
+# Compat shim: hook PostToolUse migrado para entry point Python.
+# Sessoes Claude Code abertas ANTES da migracao tem o path antigo cacheado em
+# memoria — sem este shim, todas as tool calls dessas sessoes virariam fail
+# silent ate o restart. Delega pro entry point novo via PATH.
+exec claude-dash-audit-hook "$@"
+"""
+
 # Path do script root gerado
 ROOT_SETUP_SCRIPT = Path("/tmp/claude-audit-root-setup.sh")
 ROOT_UNINSTALL_SCRIPT = Path("/tmp/claude-audit-root-uninstall.sh")
@@ -250,6 +266,37 @@ def _ensure_user_artifacts(plan: Plan, dry_run: bool) -> None:
         _action(plan, f"escrever {SYSTEMD_TIMER}", dry_run, _write_tmr)
 
 
+def _install_legacy_shim(plan: Plan, dry_run: bool) -> None:
+    """Garante que ``~/.claude/iris/hooks/audit-tool.sh`` existe como shim
+    delegando pro entry point novo.
+
+    Idempotente: se ja eh um shim valido, no-op. Caso contrario, sobrescreve
+    (em ``migrate``: substitui o bash legado de 120 linhas por wrapper de
+    1 linha; em ``fresh``: cria do zero pra cobrir sessoes pre-existentes
+    que talvez ja tenham configurado audit-tool.sh manualmente).
+    """
+    if LEGACY_HOOK.is_file():
+        try:
+            current = LEGACY_HOOK.read_text(encoding="utf-8")
+            if "claude-dash-audit-hook" in current and "exec" in current:
+                return  # Ja eh shim valido — no-op
+        except OSError:
+            pass
+
+    def _write_shim() -> None:
+        LEGACY_HOOK.parent.mkdir(parents=True, exist_ok=True)
+        LEGACY_HOOK.write_text(LEGACY_SHIM_CONTENT, encoding="utf-8")
+        os.chmod(LEGACY_HOOK, 0o755)
+
+    label = "instalar" if not LEGACY_HOOK.is_file() else "substituir por"
+    _action(
+        plan,
+        f"{label} shim de compat em {LEGACY_HOOK} (delega pro entry point novo)",
+        dry_run,
+        _write_shim,
+    )
+
+
 def _enable_timer(plan: Plan, dry_run: bool) -> None:
     def _do() -> None:
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, timeout=10)
@@ -431,6 +478,21 @@ def _uninstall_user(plan: Plan, dry_run: bool) -> None:
         if p.is_file():
             _action(plan, f"rm {p}", dry_run, lambda p=p: p.unlink())
 
+    # Remove shim de compat — mas SO se for o nosso shim (preserva arquivo
+    # que o usuario tenha customizado).
+    if LEGACY_HOOK.is_file():
+        try:
+            current = LEGACY_HOOK.read_text(encoding="utf-8")
+            if "claude-dash-audit-hook" in current and "exec" in current:
+                _action(
+                    plan,
+                    f"rm {LEGACY_HOOK} (shim)",
+                    dry_run,
+                    lambda: LEGACY_HOOK.unlink(),
+                )
+        except OSError:
+            pass
+
     # Daemon-reload final
     def _reload() -> None:
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, timeout=10)
@@ -552,15 +614,18 @@ def main_setup_audit(args: argparse.Namespace) -> int:
     print(f"\nModo: {mode.upper()}")
 
     if mode == "migrate":
-        # Apenas re-wira settings; nao toca em rsyslog/logrotate/timer.
+        # Re-wira settings + substitui audit-tool.sh por shim de compat.
+        # NAO toca em rsyslog/logrotate/timer (ja estao certos).
         _wire_settings(plan, args.dry_run, mode)
+        _install_legacy_shim(plan, args.dry_run)
         _print_plan(plan)
-        if state.legacy_hook_file_exists:
-            print(
-                f"\nAviso: arquivo legado ainda existe em {LEGACY_HOOK} — "
-                f"delete manualmente apos validar:"
-            )
-            print(f"  rm {LEGACY_HOOK}")
+        print(
+            f"\nNota: {LEGACY_HOOK} foi substituido por shim que delega pro entry point novo."
+        )
+        print(
+            "      Sessoes Claude Code abertas antes do migrate continuam funcionando\n"
+            "      via path cacheado; sessoes novas leem settings.json e usam o entry point."
+        )
         print("\nNota: rsyslog/logrotate/timer ja estavam configurados pelo setup antigo.")
         print("      Nada a fazer no lado root para migracao.")
         return 0
@@ -570,6 +635,7 @@ def main_setup_audit(args: argparse.Namespace) -> int:
     if not state.timer_active:
         _enable_timer(plan, args.dry_run)
     _wire_settings(plan, args.dry_run, mode)
+    _install_legacy_shim(plan, args.dry_run)
 
     body = _root_setup_script()
     _write_root_script(ROOT_SETUP_SCRIPT, body, args.dry_run)

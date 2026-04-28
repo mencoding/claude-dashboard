@@ -79,12 +79,10 @@ def test_session_tab_enter_triggers_drill_down() -> None:
     """Regressão: pressionar Enter num SessionListItem deve chamar
     _render_session_detail com o sid correto.
 
-    Fluxo simulado é o REAL do usuário (sem focus() explícito): troca
-    pra aba Session com tecla 4 e pressiona Enter. O bug original era
-    `.data` não persistir em ListItem; o bug secundário (v0.7.0) é que
-    a ListView não recebia foco automaticamente ao ativar a aba, então
-    Enter caía nas bindings globais. Fix: hook em on_tabbed_content_tab_activated
-    que chama list_view.focus() ao ativar a aba Session.
+    Fluxo simulado é o REAL do usuário: troca pra aba Session com tecla 4
+    (foca ListView), pressiona Down (cria seleção no item 0) e Enter
+    (dispara drill-down). v0.14.2 removeu o auto-set index=0 — usuário
+    seleciona explicitamente com setas antes de Enter.
     """
     async def run():
         app = DashboardApp()
@@ -110,10 +108,15 @@ def test_session_tab_enter_triggers_drill_down() -> None:
             if not session_items:
                 return  # Ambiente sem transcripts → nada a testar
 
-            # Nenhum focus() explícito aqui — deve estar focado pelo hook
+            # Hook on_tabbed_content_tab_activated foca o ListView; sem
+            # auto-set de index (mudança v0.14.2), ele começa em None.
             assert list_view.has_focus, "ListView não foi focado automaticamente ao ativar a aba"
-            # Primeiro item deve estar highlighted desde o populate
-            assert list_view.index == 0
+            assert list_view.index is None, "v0.14.2: nenhum item deve estar pre-selecionado"
+
+            # Pressiona Down -> cria seleção no item 0
+            await pilot.press("down")
+            await pilot.pause(0.1)
+            assert list_view.index == 0, "Down deveria selecionar o primeiro item"
 
             await pilot.press("enter")
             await pilot.pause(0.2)

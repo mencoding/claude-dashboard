@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-04-28
+
+### Added
+- TUI: arrow keys `←` / `→` cycle through the 5 tabs (App-level bindings without priority — DataTable and Input still consume them for internal navigation when focused).
+- `setup-audit`: in `migrate` and `fresh`/`partial` modes, `~/.claude/iris/hooks/audit-tool.sh` is now installed as a compat shim that delegates to `claude-dash-audit-hook`. Idempotent. `--uninstall` removes the shim too (preserves user-customized files).
+
+### Changed
+- TUI: `Audit` tab now uses `DataTable` with row cursor instead of a static Rich Table. Arrow navigation, row highlight, and `Enter` selection work natively.
+- TUI: `Audit` tab table renders incrementally — only new entries are appended each tick instead of full rebuild. Full rebuild only when filter/window changes or ring buffer rotates. Cursor position preserved during refresh.
+- TUI: `Audit` tab `s` (drill-down) now uses the **selected row's** `session_id` (cursor position) instead of always the last visible entry.
+- TUI: `Session` tab no longer pre-selects the first item on activation. Focus is set on the `ListView` via `call_after_refresh` so arrow keys take effect on first press.
+
+### Fixed
+- TUI: `pkexec` drill-down (`s` key) was hanging indefinitely when no graphical Polkit agent was running because the internal text-mode agent tried to read from the TTY which Textual already monopolizes. Fixed with `--disable-internal-agent` + `stdin=DEVNULL` + `start_new_session=True`. Returncode 127 now produces a helpful error message guiding the user to start a graphical agent.
+- `setup-audit migrate`: previous behavior left `~/.claude/iris/hooks/audit-tool.sh` untouched and asked the user to delete it manually. But Claude Code reads `settings.json` only at session startup and caches the hook path; deleting the legacy file would silently break audit logging in any session opened before the migration. The shim resolves this — the file path stays valid and delegates to the new hook.
+
 ## [0.14.1] - 2026-04-28
 
 ### Fixed
@@ -129,7 +145,8 @@ First stable release.
 - Pricing table validated against the official Anthropic table; Opus correctly priced 3× cheaper than the previous estimate.
 - Cost-band coloring across all views ([#6]).
 
-[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/mencoding/claude-dashboard/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/mencoding/claude-dashboard/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/mencoding/claude-dashboard/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/mencoding/claude-dashboard/compare/v0.13.0...v0.13.1

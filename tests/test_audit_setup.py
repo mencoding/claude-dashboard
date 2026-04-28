@@ -174,8 +174,12 @@ def test_migrate_replaces_command_in_settings(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "MIGRATE" in out
-    # Aviso pedindo remocao manual do legado
-    assert "delete manualmente" in out
+    # v0.14.2: legacy file substituido por shim de compat (nao deleta mais)
+    assert "shim" in out
+    # Conteudo do shim foi escrito no path legado
+    shim_content = p["legacy_hook"].read_text()
+    assert "claude-dash-audit-hook" in shim_content
+    assert shim_content.startswith("#!/usr/bin/env bash")
 
 
 # ---------------------------------------------------------------------------

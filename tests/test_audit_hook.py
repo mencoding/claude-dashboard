@@ -330,6 +330,12 @@ def _normalize_dynamic(line: str) -> str:
 def test_byte_identical_to_legacy_bash(tmp_path, monkeypatch):
     """Roda o bash legado e o hook novo com o mesmo payload e LOCAL_LOG;
     compara as linhas escritas (apos normalizar timestamp e PID).
+
+    Pos v0.14.2: se ``audit-tool.sh`` for um shim de compat (delega via
+    ``exec claude-dash-audit-hook``), o teste compara hook novo com ele
+    mesmo — passa trivialmente. Ainda valido como smoke do shim. O teste
+    de fidelidade real contra o bash legado de 120 linhas so faz sentido
+    em maquinas que ainda tenham o original (pre-migracao).
     """
     py_log = tmp_path / "py.log"
 
