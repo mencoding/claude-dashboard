@@ -193,6 +193,12 @@ class DashboardApp(App):
         color: $text-muted;
         padding: 0 1;
     }
+    #audit-keys {
+        height: 1;
+        background: $surface;
+        color: $text-muted;
+        padding: 0 1;
+    }
     #audit-filter-input {
         dock: bottom;
         height: 3;
@@ -298,6 +304,10 @@ class DashboardApp(App):
                 yield DataTable(id="audit-table", cursor_type="row", zebra_stripes=True)
                 yield Static(id="audit-detail")
                 yield Static(id="audit-status")
+                # Linha de atalhos especificos da aba — bindings da Audit
+                # estao todos com show=False no Footer global pra nao poluir
+                # as outras abas; aqui sao reapresentados in-line.
+                yield Static(id="audit-keys")
                 yield Input(
                     placeholder=(
                         "filtro: /tool=Bash | /error | /session=0efd3 | "
@@ -328,6 +338,7 @@ class DashboardApp(App):
         self._refresh_session_list()
         # Inicializa tailer e renderiza primeiro estado da aba Audit.
         self._audit_tailer = IncrementalTailer(AUDIT_LOG_PATH)
+        self._populate_audit_keys()
         self._refresh_audit()
         # Auto-refresh só da Now (demais via `r` manual). Audit tem
         # ciclo proprio de 1 Hz (tail incremental e barato).
@@ -707,11 +718,43 @@ class DashboardApp(App):
         self._audit_table_signature = sig
         self._audit_first_visible_key = first_key
 
-        # Cursor: so move pro fim se usuario estava no fim (auto-tail).
-        # Caso contrario, preserva posicao (append-only naturalmente
-        # mantem o cursor onde estava).
-        if dt.row_count > 0 and was_at_end:
+        # Cursor: so move pro fim se usuario estava no fim (auto-tail) E
+        # nao houve interacao recente (respeita pausa do D8). Sem o check
+        # de pausa, mover o cursor de volta pra penultima linha era
+        # imediatamente desfeito no proximo tick (1s) — barra visual
+        # "voltava sozinha" pro fim.
+        if (
+            dt.row_count > 0
+            and was_at_end
+            and not self._is_audit_paused()
+        ):
             dt.move_cursor(row=dt.row_count - 1, animate=False)
+
+    def _populate_audit_keys(self) -> None:
+        """Renderiza linha de atalhos da aba Audit no widget #audit-keys.
+
+        Conteudo estatico — populado uma vez no on_mount. Bindings sao
+        os mesmos do BINDINGS (slash/t/?/h/s/e/End) com show=False, que
+        nao apareceriam no Footer global; aqui sao reapresentados in-line
+        so quando a aba Audit esta ativa (CSS oculta o widget nas outras
+        abas via TabPane scoping natural — widget esta dentro do tab-audit).
+        """
+        keys = [
+            ("/", "filter"),
+            ("t", "window"),
+            ("?", "tests"),
+            ("h", "host"),
+            ("s", "drill-down"),
+            ("e", "export"),
+            ("End", "resume"),
+        ]
+        parts = "  ".join(
+            f"[bold cyan]{k}[/bold cyan] {label}" for k, label in keys
+        )
+        with contextlib.suppress(Exception):
+            self.query_one("#audit-keys", Static).update(
+                Text.from_markup(parts),
+            )
 
     def _is_audit_paused(self) -> bool:
         """True se auto-scroll esta pausado (D8)."""
