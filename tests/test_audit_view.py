@@ -309,6 +309,53 @@ def test_marked_session_ids_resolve_de_tool_use_ids_no_buffer() -> None:
     _run(run())
 
 
+def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
+    """Regressao explicita do fluxo do evento: pilot.press('enter') na
+    DataTable focada deve emitir RowSelected, que dispara on_data_table_
+    row_selected, que chama action_audit_enter_action, que faz compare.
+    Sem isso, o usuario reporta que Enter nao abre compare.
+    """
+    async def run():
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+
+        from claude_dash.audit.models import AuditEntry
+
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("5")  # ativa Audit + foca DataTable
+            await pilot.pause(0.3)
+
+            # Popula buffer com entries de 2 sessoes
+            base = _dt(2026, 4, 28, 0, 0, 0, tzinfo=_tz(_td(hours=-3)))
+            sid_a = "0efd3cf4-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            sid_b = "a1b2cccc-cccc-cccc-cccc-cccccccccccc"
+            for i in range(3):
+                app._audit_entries.append(AuditEntry(
+                    timestamp=base + _td(seconds=i),
+                    hostname="host", pid="1",
+                    session_id=sid_a if i < 2 else sid_b,
+                    tool="Bash", tool_use_id=f"synthetic-tu-{i}",
+                    status="success", duration_ms=10, perm_mode="auto",
+                    input_sha="0", input_bytes=10, output_bytes=20,
+                ))
+            app._refresh_audit()  # popula a DataTable
+            await pilot.pause(0.2)
+            app._audit_marked.add("synthetic-tu-0")
+            app._audit_marked.add("synthetic-tu-2")
+            assert len(app._marked_session_ids()) == 2
+
+            # Pressiona Enter — deve disparar compare via event handler
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+
+            # Marcas limpas confirmam que compare path executou
+            assert len(app._audit_marked) == 0
+    _run(run())
+
+
 def test_enter_com_2plus_marcadas_dispara_compare() -> None:
     """#67-followup-2: Enter via RowSelected delega pra compare quando ha 2+."""
     async def run():
