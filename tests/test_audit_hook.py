@@ -374,6 +374,53 @@ def test_byte_identical_to_legacy_bash(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# PreToolUse / TOOLSTART (#50)
+# ---------------------------------------------------------------------------
+
+
+def test_pretooluse_emite_msgid_toolstart() -> None:
+    """Payload com hook_event_name=PreToolUse -> msgid TOOLSTART."""
+    payload = {**BASH_PAYLOAD, "hook_event_name": "PreToolUse"}
+    full, meta = _build(payload)
+    assert " TOOLSTART " in full
+    assert " TOOLSTART " in meta
+    assert " TOOLCALL " not in full
+
+
+def test_pretooluse_inclui_event_start_no_sd() -> None:
+    payload = {**BASH_PAYLOAD, "hook_event_name": "PreToolUse"}
+    full, _ = _build(payload)
+    kv = _kv(_sd(full))
+    assert kv["event"] == "start"
+    assert kv["status"] == "running"
+    assert kv["duration_ms"] == "0"
+    assert kv["output_bytes"] == "0"
+
+
+def test_posttooluse_explicito_emite_toolcall_event_end() -> None:
+    """Payload com hook_event_name=PostToolUse -> TOOLCALL + event=end."""
+    payload = {**BASH_PAYLOAD, "hook_event_name": "PostToolUse"}
+    full, _ = _build(payload)
+    assert " TOOLCALL " in full
+    kv = _kv(_sd(full))
+    assert kv["event"] == "end"
+    assert kv["status"] == "success"
+
+
+def test_pretooluse_input_sha_estavel_com_posttooluse() -> None:
+    """input_sha do start deve bater com o do end (mesmo tool_input)."""
+    pre_payload = {**BASH_PAYLOAD, "hook_event_name": "PreToolUse"}
+    post_payload = {**BASH_PAYLOAD, "hook_event_name": "PostToolUse"}
+    pre_full, _ = _build(pre_payload)
+    post_full, _ = _build(post_payload)
+    pre_kv = _kv(_sd(pre_full))
+    post_kv = _kv(_sd(post_full))
+    assert pre_kv["input_sha"] == post_kv["input_sha"]
+    # tool_use_id permite correlacionar Pre↔Post
+    assert pre_kv["tool_use_id"] == post_kv["tool_use_id"]
+
+
+# ---------------------------------------------------------------------------
 # Util de fixture
 # ---------------------------------------------------------------------------
 

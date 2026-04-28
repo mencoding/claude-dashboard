@@ -13,6 +13,7 @@ from claude_dash.views.audit import (
     _EXPORT_FIELDS,
     _color_for,
     _is_test_session,
+    correlate_start_end,
     default_export_path,
     export_entries,
     filter_entries,
@@ -470,6 +471,70 @@ def test_render_table_inclui_coluna_host() -> None:
     # host esta na coluna idx 2
     cell = next(iter(table.columns[2].cells))
     assert "PREDATOR" in cell
+
+
+# ---- correlate_start_end (#50) --------------------------------------
+
+
+def _entry_event(
+    *,
+    event: str = "end",
+    tool_use_id: str = "x",
+    delta_seconds: float = 0,
+    status: str = "success",
+) -> AuditEntry:
+    base = datetime(2026, 4, 28, 0, 0, 0, tzinfo=timezone(timedelta(hours=-3)))
+    return AuditEntry(
+        timestamp=base + timedelta(seconds=delta_seconds),
+        hostname="host", pid="1",
+        session_id="0efd3cf4-96ef-41b7-9d41-f91ec539becd",
+        tool="Bash", tool_use_id=tool_use_id, status=status,
+        duration_ms=100 if event == "end" else 0,
+        perm_mode="auto", input_sha="0", input_bytes=10,
+        output_bytes=20 if event == "end" else 0,
+        event=event,  # type: ignore[arg-type]
+    )
+
+
+def test_correlate_start_seguido_de_end_substitui_in_place() -> None:
+    s = _entry_event(event="start", tool_use_id="A", delta_seconds=0)
+    e = _entry_event(event="end", tool_use_id="A", delta_seconds=2)
+    out = correlate_start_end([s, e])
+    assert len(out) == 1
+    assert out[0].event == "end"
+    assert out[0].duration_ms == 100
+
+
+def test_correlate_start_sem_end_preservado_como_running() -> None:
+    """Tool ainda em execucao — start fica no array."""
+    s = _entry_event(event="start", tool_use_id="B")
+    out = correlate_start_end([s])
+    assert len(out) == 1
+    assert out[0].event == "start"
+
+
+def test_correlate_multiplos_pares_e_um_orfao() -> None:
+    s1 = _entry_event(event="start", tool_use_id="A", delta_seconds=0)
+    e1 = _entry_event(event="end", tool_use_id="A", delta_seconds=1)
+    s2 = _entry_event(event="start", tool_use_id="B", delta_seconds=2)
+    s3 = _entry_event(event="start", tool_use_id="C", delta_seconds=3)
+    e3 = _entry_event(event="end", tool_use_id="C", delta_seconds=4)
+    out = correlate_start_end([s1, e1, s2, s3, e3])
+    # A: collapse pra end, B: stays start, C: collapse pra end
+    tool_use_ids_e_events = [(o.tool_use_id, o.event) for o in out]
+    assert tool_use_ids_e_events == [
+        ("A", "end"),
+        ("B", "start"),
+        ("C", "end"),
+    ]
+
+
+def test_correlate_entries_sem_tool_use_id_passam_direto() -> None:
+    """Agent legacy sem tool_use_id — sem chave de correlacao."""
+    e1 = _entry_event(event="end", tool_use_id="")
+    e2 = _entry_event(event="end", tool_use_id="")
+    out = correlate_start_end([e1, e2])
+    assert len(out) == 2
 
 
 def test_render_table_dim_para_outro_host() -> None:

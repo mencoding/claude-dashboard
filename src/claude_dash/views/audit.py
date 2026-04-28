@@ -125,6 +125,10 @@ def filter_entries(
         else:
             now = datetime.now().astimezone()
 
+    # #50: status="error" so se aplica a entries event="end" — start nao
+    # tem status valido (sempre "running"). Documentado no docstring.
+    error_filter = filters.get("status") == "error"
+
     out: list[AuditEntry] = []
     for e in entries:
         if not show_test_sessions and _is_test_session(e.session_id):
@@ -135,6 +139,11 @@ def filter_entries(
             continue
         if "status" in filters and e.status != filters["status"]:
             continue
+        # #50: filtro por status="error" exclui implicitamente entries
+        # de start (essas tem status="running" default — nao seriam
+        # "error" mas tambem nao queremos mostrar como pending no filtro).
+        if error_filter and e.event == "start":
+            continue
         if "session_prefix" in filters and not e.session_id.startswith(
             filters["session_prefix"]
         ):
@@ -144,6 +153,40 @@ def filter_entries(
         if current_host is not None and e.hostname and e.hostname != current_host:
             continue
         out.append(e)
+    return out
+
+
+def correlate_start_end(entries: list[AuditEntry]) -> list[AuditEntry]:
+    """Colapsa pares start↔end pelo mesmo tool_use_id (#50).
+
+    Entries com event="end" prevalecem sobre suas correspondentes
+    event="start": o end ja contem duration_ms/output_bytes/status reais,
+    enquanto o start so era util enquanto a tool estava em execucao.
+
+    Entries de start sem end correspondente (tools ainda rodando) sao
+    preservadas — caller tipicamente exibe com indicador "running".
+
+    Implementacao: passada unica O(n). Usa dict tool_use_id->idx do
+    start; quando o end chega, descarta o start. Entries sem
+    tool_use_id (ex.: Agent legacy) passam direto sem correlacao.
+    """
+    # idx do start no array out (pra remocao quando o end chega)
+    start_idx_by_tuid: dict[str, int] = {}
+    out: list[AuditEntry] = []
+    for e in entries:
+        if not e.tool_use_id:
+            out.append(e)
+            continue
+        if e.event == "end":
+            # Se ha start correspondente, marca pra remover
+            si = start_idx_by_tuid.pop(e.tool_use_id, None)
+            if si is not None:
+                out[si] = e  # substitui in-place
+            else:
+                out.append(e)
+        else:  # event == "start"
+            start_idx_by_tuid[e.tool_use_id] = len(out)
+            out.append(e)
     return out
 
 
