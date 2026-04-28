@@ -1,0 +1,6 @@
+[Unit]
+Description=Rotaciona sessions.log do audit do Claude Code (user-mode)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state %h/.config/logrotate/claude-audit.state %h/.config/logrotate/claude-audit.conf
