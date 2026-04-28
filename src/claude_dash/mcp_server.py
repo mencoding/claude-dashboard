@@ -20,6 +20,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from claude_dash import __version__
 from claude_dash.account import read_account_info
 from claude_dash.aggregator import (
     build_stats_for_transcript,
@@ -39,6 +40,31 @@ from claude_dash.rate_limits import read_all as read_rate_limits
 from claude_dash.views.today import today_start_ms
 
 mcp = FastMCP("claude-dashboard")
+
+# Versao do schema dos retornos das tools MCP. Bump em mudancas
+# breaking (remocao/rename de campo, mudanca de tipo). Adicoes de
+# campos novos NAO bumpam — clientes nao-estritos ignoram extras.
+# Politica completa em docs/mcp-design.md.
+SCHEMA_VERSION: int = 1
+
+
+def _envelope(payload: dict[str, Any]) -> dict[str, Any]:
+    """Encapsula payload com metadata top-level (#54-d1).
+
+    Adiciona ``_schema_version`` (versao do contrato MCP, bump so em
+    breaking) e ``dashboard_version`` (versao do package, bump em
+    qualquer release). Agentes podem usar o primeiro pra detectar
+    incompatibilidades e o segundo pra observabilidade/debug.
+
+    Mantem todos os campos do payload original; conflito de chave nao
+    deve acontecer (nao usamos ``_schema_version`` ou
+    ``dashboard_version`` em payloads internos).
+    """
+    return {
+        "_schema_version": SCHEMA_VERSION,
+        "dashboard_version": __version__,
+        **payload,
+    }
 
 
 # --- helpers internos ---------------------------------------------------
@@ -178,8 +204,8 @@ def account_info() -> dict[str, Any]:
     """
     acc = read_account_info()
     if acc is None:
-        return {"error": "~/.claude.json ausente ou sem oauthAccount"}
-    return {
+        return _envelope({"error": "~/.claude.json ausente ou sem oauthAccount"})
+    return _envelope({
         "email": acc.email,
         "display_name": acc.display_name,
         "organization_name": acc.organization_name,
@@ -195,7 +221,7 @@ def account_info() -> dict[str, Any]:
         "first_token_date": acc.first_token_date,
         "account_uuid": acc.account_uuid,
         "organization_uuid": acc.organization_uuid,
-    }
+    })
 
 
 @mcp.tool()
@@ -218,7 +244,10 @@ def rate_limits() -> dict[str, Any]:
     """
     all_snaps = read_rate_limits()
     if not all_snaps:
-        return {"installed": False, "reason": "nenhum snapshot em /tmp/claude-dash-rate-limits/"}
+        return _envelope({
+            "installed": False,
+            "reason": "nenhum snapshot em /tmp/claude-dash-rate-limits/",
+        })
 
     worst = global_worst_case()
     result: dict[str, Any] = {
@@ -243,7 +272,7 @@ def rate_limits() -> dict[str, Any]:
             "is_fresh": snap.is_fresh,
             "model_id": snap.model_id,
         }
-    return result
+    return _envelope(result)
 
 
 @mcp.tool()
@@ -256,11 +285,11 @@ def active_sessions() -> dict[str, Any]:
     do prompt no último turno — indica quão cheio está o contexto).
     """
     live = collect_live_sessions()
-    return {
+    return _envelope({
         "count": len(live),
         "generated_at": datetime.now().isoformat(),
         "sessions": [_stats_to_dict(s) for s in live],
-    }
+    })
 
 
 @mcp.tool()
@@ -278,7 +307,7 @@ def today_summary() -> dict[str, Any]:
         sum(cost_of(m, u) for m, u in s.usage_by_model.items()) for s in sessions
     )
     alive = sum(1 for s in sessions if s.alive)
-    return {
+    return _envelope({
         "window_start": datetime.fromtimestamp(since_ms / 1000).isoformat(),
         "generated_at": datetime.now().isoformat(),
         "sessions_count": len(sessions),
@@ -287,7 +316,7 @@ def today_summary() -> dict[str, Any]:
         "tokens_total": total_tokens,
         "cost_usd": round(total_cost, 2),
         "sessions": [_stats_to_dict(s, include_tools_top=4) for s in sessions],
-    }
+    })
 
 
 @mcp.tool()
@@ -302,7 +331,7 @@ def tools_breakdown(hours: int = 24) -> dict[str, Any]:
     tools = collect_tool_usage_since(since_ms)
     total = sum(t.total_count for t in tools.values())
     ordered = sorted(tools.values(), key=lambda t: -t.total_count)
-    return {
+    return _envelope({
         "window_hours": hours,
         "window_start": datetime.fromtimestamp(since_ms / 1000).isoformat(),
         "generated_at": datetime.now().isoformat(),
@@ -318,7 +347,7 @@ def tools_breakdown(hours: int = 24) -> dict[str, Any]:
             }
             for t in ordered
         ],
-    }
+    })
 
 
 @mcp.tool()
@@ -332,12 +361,12 @@ def session_details(sid: str) -> dict[str, Any]:
     """
     ref = find_transcript_for_session(sid)
     if ref is None:
-        return {
+        return _envelope({
             "error": (
                 f"Nenhum transcript encontrado para sid='{sid}'"
                 " (prefix ambíguo ou inexistente)"
             )
-        }
+        })
 
     stats = build_stats_for_transcript(ref)
     stats.subagents = len(subagents_of(ref.session_id))
@@ -358,7 +387,7 @@ def session_details(sid: str) -> dict[str, Any]:
             "messages_assistant": sub_stats.messages_assistant,
         })
 
-    return {
+    return _envelope({
         "session": _stats_to_dict(stats, include_tools_top=10),
         "timeline_tail": [
             {
@@ -376,7 +405,7 @@ def session_details(sid: str) -> dict[str, Any]:
         ],
         "turns_total": len(turns),
         "subagents": subagents_info,
-    }
+    })
 
 
 @mcp.tool()
@@ -439,7 +468,7 @@ def workflow_snapshot() -> dict[str, Any]:
             "seven_day_resets_in_seconds": worst_rl.seven_day_resets_in_seconds,
         }
 
-    return {
+    return _envelope({
         "generated_at": datetime.now().isoformat(),
         "account": {
             "email": acc.email if acc else None,
@@ -480,7 +509,7 @@ def workflow_snapshot() -> dict[str, Any]:
             ],
         },
         "alerts": _infer_alerts(live, today),
-    }
+    })
 
 
 # --- entrypoint ----------------------------------------------------------
