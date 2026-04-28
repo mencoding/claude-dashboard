@@ -1,0 +1,14 @@
+/var/log/claude/tools.log {
+    weekly
+    rotate 26
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y-W%V
+    create 0640 syslog adm
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate 2>/dev/null || systemctl kill -s HUP rsyslog
+    endscript
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Disparo semanal do logrotate de audit do Claude Code
+
+[Timer]
+OnCalendar=Mon *-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

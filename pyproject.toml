@@ -39,6 +39,7 @@ claude-dash = "claude_dash.cli:main"
 claude-dash-mcp = "claude_dash.mcp_server:main"
 claude-dash-statusline = "claude_dash.statusline:main"
 claude-dash-rate-limit-capture = "claude_dash.rate_limit_capture:main"
+claude-dash-audit-hook = "claude_dash.audit.hook:main"
 
 [project.urls]
 Homepage = "https://github.com/mencoding/claude-dashboard"
@@ -46,6 +47,9 @@ Issues = "https://github.com/mencoding/claude-dashboard/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"claude_dash.audit.templates" = ["*.conf", "*.service", "*.timer", "logrotate-system-claude-audit"]
 
 [tool.ruff]
 line-length = 100

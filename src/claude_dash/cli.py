@@ -39,6 +39,29 @@ def build_parser() -> argparse.ArgumentParser:
              "(idempotente, preserva statusline anterior via wrap)",
     )
 
+    audit_p = subparsers.add_parser(
+        "setup-audit",
+        help="Instala/migra o audit log de tool calls do Claude Code "
+             "(hook PostToolUse + rsyslog + logrotate + systemd user timer). "
+             "Idempotente; parte root vai num script gerado em /tmp.",
+    )
+    audit_p.add_argument(
+        "--print-sudo",
+        action="store_true",
+        help="Apenas imprime o conteudo dos scripts root (setup + uninstall); nao toca em nada.",
+    )
+    audit_p.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Reverte user-mode (timer, configs, wire) e gera script root de uninstall. "
+             "Preserva sessions.log.",
+    )
+    audit_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simula todas as acoes sem escrever em disco nem invocar systemctl.",
+    )
+
     return parser
 
 
@@ -71,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
         from claude_dash.setup_status import main as run_setup
 
         return run_setup()
+    if args.command == "setup-audit":
+        from claude_dash.audit.setup import main_setup_audit
+
+        return main_setup_audit(args)
     return 2  # pragma: no cover
 
 
