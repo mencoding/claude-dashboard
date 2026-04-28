@@ -16,6 +16,7 @@ adicionar ao `~/.claude/settings.json`:
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -29,6 +30,8 @@ from claude_dash.aggregator import (
     collect_tool_usage_since,
     extract_turns,
 )
+from claude_dash.audit.partial_stats import build_partial_stats_from_audit
+from claude_dash.audit.tail import IncrementalTailer
 from claude_dash.discover import (
     find_transcript_for_session,
     subagents_of,
@@ -37,7 +40,11 @@ from claude_dash.models import SessionStats
 from claude_dash.pricing import cost_of
 from claude_dash.rate_limits import global_worst_case
 from claude_dash.rate_limits import read_all as read_rate_limits
+from claude_dash.views.audit import correlate_start_end, filter_entries
 from claude_dash.views.today import today_start_ms
+
+# Path do audit log (mantem em sync com views/tui.py:AUDIT_LOG_PATH).
+AUDIT_LOG_PATH = Path.home() / ".claude" / "iris" / "audit" / "sessions.log"
 
 mcp = FastMCP("claude-dashboard")
 
@@ -509,6 +516,199 @@ def workflow_snapshot() -> dict[str, Any]:
             ],
         },
         "alerts": _infer_alerts(live, today),
+    })
+
+
+# --- audit log (#54-d3) -------------------------------------------------
+
+
+def _audit_entry_to_dict(e: Any) -> dict[str, Any]:
+    """Serializa AuditEntry pra dict JSON-friendly."""
+    return {
+        "timestamp": e.timestamp.isoformat(),
+        "hostname": e.hostname,
+        "pid": e.pid,
+        "session_id": e.session_id,
+        "tool": e.tool,
+        "tool_use_id": e.tool_use_id,
+        "status": e.status,
+        "duration_ms": e.duration_ms,
+        "perm_mode": e.perm_mode,
+        "input_sha": e.input_sha,
+        "input_bytes": e.input_bytes,
+        "output_bytes": e.output_bytes,
+        "subagent_type": e.subagent_type,
+        "event": e.event,
+    }
+
+
+@mcp.tool()
+def audit_entries(
+    session: str | None = None,
+    tool: str | None = None,
+    status: str | None = None,
+    host: str | None = None,
+    hours: int = 24,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Lista entries do audit log com filtros (#54-d3).
+
+    Le ``~/.claude/iris/audit/sessions.log`` (metadata-only, syncavel
+    cross-device). NUNCA expoe ``/var/log/claude/tools.log`` (esse contem
+    cmd/path/url completos — sensivel).
+
+    Wraps ``views/audit.filter_entries``. Filtros aditivos (uma key por
+    tipo) — agente combina via reaplicacao com input refinado.
+
+    Args:
+        session: prefix-match no session_id (ex.: "0efd3" casa qualquer
+            UUID que comece com isso)
+        tool: match exato no nome da tool (ex.: "Bash", "Agent")
+        status: "success" | "error" | "running" (este so para entries
+            de start, ainda em execucao)
+        host: prefix-match no hostname; sem filtro = TODOS os hosts
+            (cross-device). Use ``host=<atual>`` pra so este host.
+        hours: janela temporal (default 24h, max razoavel ~720h=30d)
+        limit: cap de entries retornadas (default 500). Sempre as
+            mais recentes da janela.
+
+    Returns (Schema):
+        {
+            "_schema_version": 1,
+            "dashboard_version": "...",
+            "filters_applied": {...},
+            "total_in_window": int,
+            "returned": int,
+            "entries": [{
+                "timestamp": ISO 8601,
+                "hostname": str,
+                "session_id": str,
+                "tool": str,
+                "tool_use_id": str,
+                "status": "success"|"error"|"running",
+                "duration_ms": int,
+                "perm_mode": str,
+                "input_sha": str (16-char hex),
+                "input_bytes": int,
+                "output_bytes": int,
+                "subagent_type": str|None,
+                "event": "start"|"end",
+                "pid": str
+            }]
+        }
+    """
+    # Le e parseia o log inteiro via tailer (IncrementalTailer.read_new
+    # le tudo na primeira chamada).
+    tailer = IncrementalTailer(AUDIT_LOG_PATH)
+    try:
+        all_entries = tailer.read_new()
+    except Exception as e:
+        return _envelope({
+            "error": f"Falha ao ler audit log: {e}",
+            "filters_applied": {},
+            "total_in_window": 0,
+            "returned": 0,
+            "entries": [],
+        })
+
+    # Correlaciona start↔end (#50): caller espera ver o end quando ele
+    # ja chegou; orphan starts indicam tool ainda em execucao.
+    all_entries = correlate_start_end(all_entries)
+
+    filters: dict[str, str] = {}
+    if tool:
+        filters["tool"] = tool
+    if status:
+        filters["status"] = status
+    if session:
+        filters["session_prefix"] = session
+    if host:
+        filters["host"] = host
+
+    visible = filter_entries(
+        all_entries,
+        filters=filters,
+        window_hours=float(hours),
+        show_test_sessions=False,
+        current_host=None,  # MCP nao filtra por host atual — agente decide
+    )
+    total = len(visible)
+    # Entries mais recentes primeiro (ordem inversa pra agentes que
+    # fazem head do retorno).
+    sliced = list(reversed(visible[-limit:]))
+    return _envelope({
+        "filters_applied": {
+            "session": session,
+            "tool": tool,
+            "status": status,
+            "host": host,
+            "hours": hours,
+            "limit": limit,
+        },
+        "total_in_window": total,
+        "returned": len(sliced),
+        "entries": [_audit_entry_to_dict(e) for e in sliced],
+    })
+
+
+@mcp.tool()
+def audit_session_partial(sid: str) -> dict[str, Any]:
+    """Drill-down parcial via metadata da sessions.log (#54-d3 + #55).
+
+    Util quando:
+    - Sessao rodou em outra maquina (transcript JSONL nao sincado)
+    - Transcript JSONL local foi rotacionado/limpo
+
+    Wraps ``audit.partial_stats.build_partial_stats_from_audit``. Retorna
+    counts agregados (total_calls, error_count, top_tools, duracao) sem
+    timeline de turnos ou custo (esses dados so existem no JSONL).
+
+    Args:
+        sid: session_id (aceita prefix; primeiro match vence)
+
+    Returns (Schema):
+        {
+            "_schema_version": 1,
+            "dashboard_version": "...",
+            "found": bool,
+            "session_id": str,         # full session_id (resolvido)
+            "hostname": str,           # origem da sessao
+            "first_ts": ISO 8601,
+            "last_ts": ISO 8601,
+            "duration_ms": int,
+            "total_calls": int,
+            "error_count": int,
+            "error_rate": float (0.0-1.0),
+            "top_tools": [["Bash", 42], ["Read", 28], ...]  # top 8
+        }
+        ou:
+        {
+            "_schema_version": 1,
+            "dashboard_version": "...",
+            "found": false,
+            "error": "..."
+        }
+    """
+    partial = build_partial_stats_from_audit(sid)
+    if partial is None:
+        return _envelope({
+            "found": False,
+            "error": (
+                f"Nao existem dados na sessions.log local sobre sid='{sid}'. "
+                "Pode ser sid invalido ou sessao em outra maquina sem sync."
+            ),
+        })
+    return _envelope({
+        "found": True,
+        "session_id": partial.session_id,
+        "hostname": partial.hostname,
+        "first_ts": partial.first_ts.isoformat() if partial.first_ts else None,
+        "last_ts": partial.last_ts.isoformat() if partial.last_ts else None,
+        "duration_ms": partial.duration_ms,
+        "total_calls": partial.total_calls,
+        "error_count": partial.error_count,
+        "error_rate": round(partial.error_rate, 4),
+        "top_tools": [list(t) for t in partial.top_tools],
     })
 
 
