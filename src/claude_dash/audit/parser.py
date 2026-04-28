@@ -95,3 +95,42 @@ def parse_line(line: str) -> AuditEntry | None:
         subagent_type=fields.get("subagent_type") or None,
         event=event,
     )
+
+
+# Trailing fields apos o ']' do SD: cwd='...', cmd='...', path='...', etc.
+# Aceita aspas simples (Python repr — formato do hook) ou duplas.
+_TRAILING_RE = re.compile(r"(\w+)=(['\"])(.*?)\2")
+
+
+def parse_full_line(line: str) -> tuple[AuditEntry | None, dict[str, str]]:
+    """Parseia linha + extrai campos trailing (cwd, cmd, path, url, etc.).
+
+    O hook `audit/hook.py:_build_messages` emite, alem do STRUCTURED-DATA
+    canonico, um sufixo informativo:
+
+        ... [audit@iris ...] cwd='/path' cmd='ls -la'
+
+    Esses campos aparecem APENAS no /var/log/claude/tools.log (forense
+    completo), nao no metadata-only sessions.log. O drill-down `s` da
+    aba Audit le esse arquivo e quer renderizar legivel.
+
+    Retorna (entry, extra) — extra e' dict {key: value} com cwd e tool-
+    specific fields conforme `_summarize` no hook.
+
+    Campos cobertos por convencao do hook:
+    - Bash    -> cmd
+    - Read/Edit/Write -> path
+    - WebFetch  -> url
+    - WebSearch -> query
+    - Skill    -> skill
+    - Agent    -> subagent + desc
+    - Sempre  -> cwd (do payload do Claude Code)
+    """
+    entry = parse_line(line)
+    extra: dict[str, str] = {}
+    bracket = line.find("]")
+    if bracket >= 0 and bracket < len(line) - 1:
+        trailing = line[bracket + 1:].strip()
+        for m in _TRAILING_RE.finditer(trailing):
+            extra[m.group(1)] = m.group(3)
+    return entry, extra

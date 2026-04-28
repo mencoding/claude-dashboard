@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -154,6 +155,80 @@ def filter_entries(
             continue
         out.append(e)
     return out
+
+
+def render_drill_down_human(line: str) -> Panel:
+    """Renderiza uma linha bruta do tools.log como Panel labeled (#67-followup).
+
+    Substitui a saida raw RFC 5424 por painel com cada campo identificado:
+    Timestamp, Hostname, PID, Event, Session, Tool, Tool use ID, Status,
+    Duration, Permission mode, Input SHA, Input bytes, Output bytes,
+    plus trailing fields (CWD + tool-specific: cmd/path/url/query/skill).
+
+    Linhas malformadas viram painel red com a linha original — nao crasha.
+    """
+    from claude_dash.audit.parser import parse_full_line
+
+    entry, extra = parse_full_line(line)
+    if entry is None:
+        return Panel(
+            Text(line.rstrip(), style="red"),
+            title="Linha invalida",
+            title_align="left",
+            border_style="red",
+        )
+
+    txt = Text()
+
+    def field(label: str, value: str, *, value_style: str = "") -> None:
+        txt.append(f"  {label:<18}", style="dim")
+        txt.append(f"{value}\n", style=value_style)
+
+    field("Timestamp:", entry.timestamp.isoformat())
+    field("Hostname:", entry.hostname)
+    field("PID:", entry.pid or "—")
+    event_style = "bold cyan" if entry.event == "start" else "bold"
+    field("Event:", entry.event, value_style=event_style)
+    field("Session:", entry.session_id)
+    field("Tool:", entry.tool, value_style="bold")
+    if entry.subagent_type:
+        field("Subagent:", entry.subagent_type)
+    field("Tool use ID:", entry.tool_use_id or "—")
+    status_style = (
+        "red" if entry.status == "error"
+        else ("yellow" if entry.status == "running" else "green")
+    )
+    field("Status:", entry.status, value_style=status_style)
+    field("Duration:", f"{entry.duration_ms} ms")
+    field("Permission mode:", entry.perm_mode or "—")
+    field("Input SHA:", entry.input_sha or "—")
+    field("Input bytes:", str(entry.input_bytes))
+    field("Output bytes:", str(entry.output_bytes))
+
+    # Trailing — separa visualmente
+    if extra:
+        txt.append("\n")
+        if "cwd" in extra:
+            field("CWD:", extra["cwd"])
+        # Tool-specific summaries do hook _summarize()
+        for key, label in (
+            ("cmd", "Command:"),
+            ("path", "Path:"),
+            ("url", "URL:"),
+            ("query", "Query:"),
+            ("skill", "Skill:"),
+            ("subagent", "Subagent input:"),
+            ("desc", "Description:"),
+        ):
+            if key in extra:
+                field(label, extra[key])
+
+    ts_str = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]
+    title = f"{entry.tool} @ {ts_str}"
+    if entry.subagent_type:
+        title = f"{entry.tool}({entry.subagent_type}) @ {ts_str}"
+    border = "red" if entry.status == "error" else "cyan"
+    return Panel(txt, title=title, title_align="left", border_style=border)
 
 
 def correlate_start_end(entries: list[AuditEntry]) -> list[AuditEntry]:

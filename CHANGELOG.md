@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.8] - 2026-04-28
+
+### Added
+- TUI: drill-down forense (`s` na aba Audit) agora renderiza cada linha do `tools.log` como **painel humano-legível** com cada campo identificado por label — `Timestamp:`, `Hostname:`, `PID:`, `Event:`, `Session:`, `Tool:`, `Tool use ID:`, `Status:`, `Duration:`, `Permission mode:`, `Input SHA:`, `Input bytes:`, `Output bytes:` + trailing fields tool-específicos: `CWD:`, `Command:` (Bash), `Path:` (Read/Edit/Write), `URL:` (WebFetch), `Query:` (WebSearch), `Skill:`, `Subagent:` + `Description:` (Agent). Status em cores (`red` pra erro, `yellow` pra running, `green` pra success); border do painel vermelho quando entry é erro. Antes mostrava texto bruto RFC 5424 que era ilegível em scan rápido.
+- Novo helper `claude_dash.audit.parser.parse_full_line(line)` — retorna `(AuditEntry, extra_fields)` extraindo cwd/cmd/path/url/query/skill do trailing após o `]`. Esses campos só existem no `/var/log/claude/tools.log` (forense completo), não na `sessions.log` metadata-only.
+- Novo `views/audit.py:render_drill_down_human(line)` — pure function que produz Rich Panel labeled. Testável sem TUI.
+
+### Changed
+- TUI: aba `Audit` agora usa **split 50/50** entre tabela e painel inferior (era 70/30). Drill-down e comparação ganharam espaço útil. `#audit-detail` ganhou `overflow-y: scroll` + `scrollbar-gutter: stable` — barra de rolagem sempre visível, sem layout shift quando o conteúdo cresce.
+
+### Fixed
+- TUI: comparação cross-session (`c`) tinha conteúdo cortado quando 3+ sessões geravam mais linhas do que cabia em ~25% da tela. Agora com 50% de altura + scrollbar dedicado, o conteúdo todo fica acessível via scroll.
+
 ## [0.15.7] - 2026-04-28
 
 ### Fixed

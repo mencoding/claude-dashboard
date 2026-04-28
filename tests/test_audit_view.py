@@ -18,6 +18,7 @@ from claude_dash.views.audit import (
     export_entries,
     filter_entries,
     parse_filter_input,
+    render_drill_down_human,
     render_footer,
     render_table,
 )
@@ -548,3 +549,105 @@ def test_render_table_dim_para_outro_host() -> None:
     # row.style ou cells inheritados — Rich mantem _row_styles na Table.
     # Mais simples: checamos que a Table tem pelo menos uma row com style dim.
     assert any("dim" in str(getattr(row, "style", "")) for row in rendered)
+
+
+# ---- render_drill_down_human (#67-followup) -------------------------
+
+
+def _human_text(panel) -> str:
+    """Extrai conteudo plain text de um Rich Panel pra assertions."""
+    from rich.console import Console
+    console = Console(record=True, width=200)
+    console.print(panel)
+    return console.export_text()
+
+
+def test_drill_down_human_inclui_todos_os_labels_principais() -> None:
+    line = (
+        '<134>1 2026-04-28T17:55:38.278-03:00 ret-dti-601048 claude-code 99999 '
+        'TOOLCALL [audit@iris session="0efd3cf4-96ef-41b7-9d41-f91ec539becd" '
+        'tool="Bash" tool_use_id="toolu_test" status="success" '
+        'duration_ms="42" perm_mode="auto" input_sha="abc123" '
+        "input_bytes=\"50\" output_bytes=\"100\"] cwd='/home/menzani' cmd='ls -la'"
+    )
+    panel = render_drill_down_human(line)
+    txt = _human_text(panel)
+    # Cabecalho do Panel inclui tool + horario
+    assert "Bash" in txt
+    # Labels canonicos
+    for label in (
+        "Timestamp:", "Hostname:", "PID:", "Event:", "Session:", "Tool:",
+        "Tool use ID:", "Status:", "Duration:", "Permission mode:",
+        "Input SHA:", "Input bytes:", "Output bytes:",
+    ):
+        assert label in txt, f"label ausente: {label}"
+    # Valores
+    assert "ret-dti-601048" in txt
+    assert "0efd3cf4-96ef-41b7-9d41-f91ec539becd" in txt
+    assert "toolu_test" in txt
+    assert "42 ms" in txt
+    # Trailing fields
+    assert "CWD:" in txt
+    assert "/home/menzani" in txt
+    assert "Command:" in txt
+    assert "ls -la" in txt
+
+
+def test_drill_down_human_status_error_em_red() -> None:
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="error" '
+        'duration_ms="50" perm_mode="auto" input_sha="0" input_bytes="0" '
+        'output_bytes="0"]'
+    )
+    panel = render_drill_down_human(line)
+    # Border do Panel vira red quando status=error
+    assert panel.border_style == "red"
+
+
+def test_drill_down_human_event_start_destacado() -> None:
+    """PreToolUse/TOOLSTART -> Event: start em estilo destacado."""
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLSTART '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="running" '
+        'duration_ms="0" perm_mode="auto" input_sha="0" input_bytes="0" '
+        'output_bytes="0" event="start"]'
+    )
+    panel = render_drill_down_human(line)
+    txt = _human_text(panel)
+    assert "Event:" in txt
+    assert "start" in txt
+    assert "running" in txt
+
+
+def test_drill_down_human_linha_invalida_nao_crasha() -> None:
+    panel = render_drill_down_human("texto qualquer nao parseavel")
+    assert panel.border_style == "red"
+    txt = _human_text(panel)
+    assert "Linha invalida" in txt or "invalida" in txt
+
+
+def test_drill_down_human_path_de_read() -> None:
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Read" tool_use_id="x" status="success" '
+        'duration_ms="10" perm_mode="auto" input_sha="0" input_bytes="0" '
+        "output_bytes=\"0\"] cwd='/tmp' path='/etc/hostname'"
+    )
+    panel = render_drill_down_human(line)
+    txt = _human_text(panel)
+    assert "Path:" in txt
+    assert "/etc/hostname" in txt
+
+
+def test_drill_down_human_subagent_em_agent() -> None:
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Agent" tool_use_id="x" status="success" '
+        'duration_ms="5000" perm_mode="auto" input_sha="0" input_bytes="0" '
+        'output_bytes="0" subagent_type="general-purpose"]'
+    )
+    panel = render_drill_down_human(line)
+    txt = _human_text(panel)
+    assert "Subagent:" in txt
+    assert "general-purpose" in txt
