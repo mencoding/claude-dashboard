@@ -115,6 +115,131 @@ O entrypoint de captura foi preservado por compatibilidade.
 Sem nenhuma das formas acima, o dashboard continua funcional — apenas
 omite a linha de rate limits no header. Graceful degradation.
 
+### Audit log de tool calls
+
+Desde **v0.13** o dashboard empacota um sistema de auditoria de toda
+chamada de tool do Claude Code (Bash, Read, Edit, Write, WebFetch,
+WebSearch, MCP, Agent, Skill). O hook `PostToolUse` com matcher `.*`
+escreve em **dois destinos**, cada um com um propósito distinto:
+
+| Destino | Conteúdo | Permissão | Sync Drive |
+|:---|:---|:---|:---:|
+| `/var/log/claude/tools.log` | **Completo** (cmd, path, url, query até 4 KB) | `syslog:adm 0640` | não |
+| `~/.claude/iris/audit/sessions.log` | **Metadata-only** (timestamp, session, tool, status, hash, bytes) | `menzani 0600` | sim |
+
+**Threat model.** A motivação foi um incidente de prompt injection
+(2026-04-27, repo `paperclipai/paperclip` via `WebFetch`) que plantou
+tags `<system-reminder>` falsificadas no conteúdo de uma página externa.
+Auditoria fora do controle do agente é a defesa de última camada: o
+forense local fica em `/var/log/claude/`, escrito pelo `rsyslog` (root),
+imune a adulteração pelo próprio Claude. O `sessions.log` em metadata-only
+é syncado para o Drive — timeline cross-device sem vazar `cmd`/`path`/`url`.
+Hook é **fail-silent** (exit 0 sempre) — perda de log preferível a quebra
+de fluxo da sessão.
+
+**Bootstrap em 3 comandos:**
+
+```bash
+pipx install ~/Desenvolvimento/claude-dashboard
+claude-dash setup-audit                    # parte user-mode + script root
+sudo bash /tmp/claude-audit-root-setup.sh  # rsyslog + logrotate + /var/log/claude/
+```
+
+`setup-audit` é idempotente. Detecta o estado e age só no delta:
+
+- `fresh`: nada instalado → bootstrap completo (cria `~/.claude/iris/audit/`,
+  configura logrotate user, habilita systemd user timer, wira o
+  `PostToolUse`, gera o script root).
+- `migrate`: setup antigo em `~/.claude/iris/hooks/audit-tool.sh` → apenas
+  re-wira `settings.json` para o entry point `claude-dash-audit-hook`.
+- `partial`: alguns componentes presentes → completa o que falta.
+- `installed`: tudo presente → no-op.
+
+Flags relevantes:
+
+```bash
+claude-dash setup-audit --dry-run     # simula tudo
+claude-dash setup-audit --print-sudo  # imprime o conteúdo dos scripts root
+claude-dash setup-audit --uninstall   # reverte user-mode (preserva sessions.log)
+```
+
+**O `audit-tool.sh` legado em `~/.claude/iris/hooks/` nunca é deletado
+automaticamente** — após validar a migração, remova manualmente.
+
+**Limitação conhecida — subagentes.** Quando uma sessão pai dispara
+`Agent(...)`, o hook captura **apenas a chamada inicial** (com
+`subagent_type`, `description`, `duration_ms`). As tool calls internas do
+subagent **não disparam `PostToolUse` no parent** e não aparecem no audit.
+Granularidade no nível "Agent foi spawnado para X, levou N ms" está OK;
+para saber comandos exatos, inspecionar o `transcript_path` do subagent
+diretamente.
+
+#### Receitas de consulta
+
+Premissa: usuário no grupo `adm` lê os dois arquivos sem `sudo`.
+
+**Tail vivo:**
+
+```bash
+tail -f ~/.claude/iris/audit/sessions.log     # metadata-only
+tail -f /var/log/claude/tools.log             # com cmd/path/url
+journalctl -t claude-audit -f                 # via journald
+```
+
+**Filtragem básica:**
+
+```bash
+SESSION="b531e7ac-b76b-4658-9e3f-940ea94e9cb6"
+grep "$SESSION" /var/log/claude/tools.log | tail -10
+grep 'tool="Bash"'    /var/log/claude/tools.log | tail -10
+grep 'tool="WebFetch"' /var/log/claude/tools.log
+grep 'status="error"' /var/log/claude/tools.log
+```
+
+**Janela temporal:**
+
+```bash
+# Última hora
+awk -v t="$(date -d '1 hour ago' -Iseconds)" '$0 > t' /var/log/claude/tools.log
+# Hoje a partir das 14h
+grep "^$(date +%Y-%m-%d)T1[4-9]" /var/log/claude/tools.log
+```
+
+**Estatísticas:**
+
+```bash
+# Top tools
+grep -oE 'tool="[^"]*"' ~/.claude/iris/audit/sessions.log | sort | uniq -c | sort -rn
+# Top sessões
+grep -oE 'session="[^"]*"' ~/.claude/iris/audit/sessions.log | sort | uniq -c | sort -rn | head -10
+# Sessões com erros
+grep 'status="error"' ~/.claude/iris/audit/sessions.log \
+  | grep -oE 'session="[^"]*"' | sort | uniq -c
+```
+
+**Histórico (arquivos rotacionados):**
+
+```bash
+# Sistema (root-protected, 26 weeks comprimido)
+ls /var/log/claude/
+zgrep "session=\"$SESSION\"" /var/log/claude/tools.log-*.gz
+# User-mode (metadata, syncado pro Drive)
+ls ~/.claude/iris/audit/archive/
+zgrep "tool=\"WebFetch\"" ~/.claude/iris/audit/archive/sessions-*.gz
+```
+
+**JSON via journald (parsing programático):**
+
+```bash
+journalctl -t claude-audit -o json --since "1 hour ago" | jq .
+```
+
+Retenção: 26 semanas (6 meses), gzip via `logrotate` sistema (cron diário)
++ `systemd --user` timer semanal (segunda 03:30 + jitter 15 min).
+
+A aba TUI dedicada (`Audit`) com filtros e tail real-time fica para a
+fase 2 (issue derivada do #24).
+
 ### MCP server — canal para agentes
 
 A partir da v0.7, um servidor MCP expõe o estado do Claude Code como
@@ -195,8 +320,14 @@ sem reinstalar.
 
 ## Status
 
-**v0.11.x** — projeto funcionalmente maduro para uso diário.
-Entregas principais por versão:
+**v0.13** (em andamento, branch `feat/audit-phase1`) — empacota o hook
+de auditoria de tool calls (`claude-dash-audit-hook`) e o subcomando
+idempotente `claude-dash setup-audit`. Aba TUI dedicada fica para fase 2.
+
+**v0.12** — flag `--version`, exposição de `session_name` (`/rename`)
+em MCP tools e TUI.
+
+Entregas principais anteriores:
 
 - **v0.11.3** — detecção explícita de `statusLine` ausente em
   `~/.claude/settings.json` (robustez contra sync cross-device que
