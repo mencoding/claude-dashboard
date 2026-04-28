@@ -40,6 +40,7 @@ from claude_dash.aggregator import (
     extract_turns,
 )
 from claude_dash.audit import CURRENT_HOSTNAME
+from claude_dash.audit.alerts import ErrorAlertEmitter, resolve_alert_level
 from claude_dash.audit.models import AuditEntry
 from claude_dash.audit.tail import IncrementalTailer
 from claude_dash.discover import (
@@ -261,6 +262,11 @@ class DashboardApp(App):
         self._audit_filter: dict[str, str] = {}
         self._audit_window_hours: float | None = 24.0
         self._audit_show_tests: bool = False
+        # Emitter de alertas pra tool errors (#37). Nivel resolvido do
+        # env CLAUDE_DASH_AUDIT_ALERT_LEVEL no startup; mudancas em
+        # runtime exigem restart (padrao pra env vars).
+        # textual_notify e' setado em on_mount quando o app esta pronto.
+        self._error_alert_emitter = ErrorAlertEmitter(level=resolve_alert_level())
         # Filtro implicito por hostname (#55): default = so este host.
         # Toggle pela tecla `h`. Quando False, mostra tudo (hosts alheios
         # em dim). Filtro explicito `/host=<name>` em `_audit_filter`
@@ -338,6 +344,12 @@ class DashboardApp(App):
         self._refresh_session_list()
         # Inicializa tailer e renderiza primeiro estado da aba Audit.
         self._audit_tailer = IncrementalTailer(AUDIT_LOG_PATH)
+        # Liga callback do Textual notify ao emitter de alertas (#37).
+        # severity="error" => toast vermelho do Textual; titulo identifica
+        # origem pra distinguir de outros notifies.
+        self._error_alert_emitter._textual_notify = lambda msg: self.notify(
+            msg, severity="error", title="Audit",
+        )
         self._populate_audit_keys()
         self._refresh_audit()
         # Auto-refresh só da Now (demais via `r` manual). Audit tem
@@ -555,7 +567,9 @@ class DashboardApp(App):
 
         Mesmo quando a aba nao esta ativa, continuamos drenando o
         tailer pra nao perder entries ate o usuario abrir a aba. So a
-        renderizacao e gateada pela aba ativa.
+        renderizacao e gateada pela aba ativa. Alertas de erro (#37)
+        disparam INDEPENDENTE da aba ativa — usuario quer saber de erro
+        mesmo que esteja olhando Now/Today.
         """
         if self._audit_tailer is None:
             return
@@ -565,6 +579,10 @@ class DashboardApp(App):
             return
         if new_entries:
             self._audit_entries.extend(new_entries)
+            # Dispara alertas pra erros nas entries que acabaram de chegar.
+            # Nivel `none` no emitter -> no-op rapido.
+            with contextlib.suppress(Exception):
+                self._error_alert_emitter.emit(new_entries)
         if self._audit_active():
             self._refresh_audit()
 

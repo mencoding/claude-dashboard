@@ -149,6 +149,17 @@ explicitamente). No drill-down (`s` na aba ou `claude-dash session <sid>`):
    Sem timeline de turnos nem custos por turno (só vêm do JSONL).
 3. Nem JSONL nem metadata → mensagem clara `Nao existem dados neste host`.
 
+**Notificações de erro (#37).** Configurável via env var
+`CLAUDE_DASH_AUDIT_ALERT_LEVEL`:
+
+- `none` (default): silêncio total.
+- `toast`: notificação in-app do Textual quando aparece `status="error"` em entry nova.
+- `sound`: `notify-send` libnotify (toast do sistema com som default).
+- `both`: as duas.
+
+Anti-flood por `tool_use_id` em janela de 60s (mesmo erro consecutivo
+não martela). `notify-send` ausente do `$PATH` cai silencioso.
+
 **Bootstrap em 3 comandos:**
 
 ```bash

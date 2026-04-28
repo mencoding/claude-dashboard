@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.7] - 2026-04-28
+
+### Added
+- TUI: `Audit` tab now emits push notifications when a new entry with `status="error"` arrives via the incremental tail. Configured via env var `CLAUDE_DASH_AUDIT_ALERT_LEVEL ∈ {none, toast, sound, both}` — default `none` preserves the previous quiet behavior. `toast` shows an in-app Textual notification; `sound` calls `notify-send` (libnotify, also adds the system "ding"); `both` does both. Anti-flood: same `tool_use_id` (or `session_id` fallback for legacy entries without `tool_use_id`) is deduplicated within a 60s window. `notify-send` absent from `$PATH` is silent — graceful degradation. Alerts fire even when the active tab isn't `Audit`. Closes #37.
+- New module `claude_dash.audit.alerts` with pure-function `resolve_alert_level()` and `ErrorAlertEmitter` class. Testable in isolation with injectable `clock`, `textual_notify`, and `libnotify` callables.
+
 ## [0.14.6] - 2026-04-28
 
 ### Added
