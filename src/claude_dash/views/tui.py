@@ -47,6 +47,12 @@ from claude_dash.discover import (
     subagents_of,
 )
 from claude_dash.views.audit import (
+    default_export_path as _audit_default_export_path,
+)
+from claude_dash.views.audit import (
+    export_entries as _audit_export_entries,
+)
+from claude_dash.views.audit import (
     filter_entries as _audit_filter_entries,
 )
 from claude_dash.views.audit import (
@@ -195,6 +201,15 @@ class DashboardApp(App):
     #audit-filter-input.active {
         display: block;
     }
+    #audit-export-input {
+        dock: bottom;
+        height: 3;
+        display: none;
+        border: solid $accent;
+    }
+    #audit-export-input.active {
+        display: block;
+    }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -221,6 +236,7 @@ class DashboardApp(App):
         Binding("t", "audit_cycle_window", "Cycle window", show=False),
         Binding("question_mark", "audit_toggle_tests", "Toggle tests", show=False),
         Binding("s", "audit_drill_down_root", "Root drill-down", show=False),
+        Binding("e", "audit_export_prompt", "Export", show=False),
         Binding("end", "audit_resume_scroll", "Resume", show=False),
     ]
 
@@ -277,6 +293,12 @@ class DashboardApp(App):
                 yield Input(
                     placeholder="filtro: /tool=Bash | /error | /session=0efd3 | Esc cancela",
                     id="audit-filter-input",
+                )
+                yield Input(
+                    placeholder=(
+                        "export: caminho .csv ou .json (vazio = default em ~) | Esc cancela"
+                    ),
+                    id="audit-export-input",
                 )
         yield Footer()
 
@@ -693,6 +715,23 @@ class DashboardApp(App):
         except Exception:
             pass
 
+    def action_audit_export_prompt(self) -> None:
+        """Tecla `e`: abre prompt pra exportar entries filtradas (#36).
+
+        Path vazio -> default em `~/audit-export-<ts>.<ext>`. Extensao
+        determina formato (`.csv` -> CSV, `.json` -> JSON). Default e' csv.
+        """
+        if not self._audit_active():
+            return
+        self._mark_audit_user_action()
+        try:
+            inp = self.query_one("#audit-export-input", Input)
+            inp.value = ""
+            inp.add_class("active")
+            inp.focus()
+        except Exception:
+            pass
+
     def action_audit_resume_scroll(self) -> None:
         """Tecla End: retoma auto-scroll no fundo (D8)."""
         if not self._audit_active():
@@ -823,19 +862,58 @@ class DashboardApp(App):
             self._render_session_detail(event.item.sid)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Filter prompt da aba Audit: aplica e fecha."""
-        if event.input.id != "audit-filter-input":
+        """Prompts da aba Audit: filter aplica filtro; export grava arquivo."""
+        if event.input.id == "audit-filter-input":
+            self._audit_filter = _audit_parse_filter(event.value)
+            event.input.remove_class("active")
+            event.input.value = ""
+            with contextlib.suppress(Exception):
+                self.query_one("#audit-table", Static).focus()
+            self._refresh_audit()
             return
-        self._audit_filter = _audit_parse_filter(event.value)
-        event.input.remove_class("active")
-        event.input.value = ""
-        # Re-foca no container da aba pra chaves voltarem a funcionar.
-        with contextlib.suppress(Exception):
-            self.query_one("#audit-table", Static).focus()
-        self._refresh_audit()
+        if event.input.id == "audit-export-input":
+            self._handle_audit_export(event.value.strip())
+            event.input.remove_class("active")
+            event.input.value = ""
+            with contextlib.suppress(Exception):
+                self.query_one("#audit-table", Static).focus()
+            return
+
+    def _handle_audit_export(self, raw_path: str) -> None:
+        """Resolve path + formato, exporta conjunto filtrado atual.
+
+        Sem path -> default em `~/audit-export-<ts>.csv`. Extensao do path
+        manda no formato (.json -> JSON; senao CSV). Erros de IO viram
+        mensagem no painel #audit-detail; sucesso idem com path final.
+        """
+        visible = list(getattr(self, "_audit_visible_cache", []))
+        if not visible:
+            self._update_audit_detail(
+                Text("Nada a exportar — filtro produziu zero entries.", style="yellow"),
+            )
+            return
+        if raw_path:
+            path = Path(raw_path).expanduser()
+            fmt = "json" if path.suffix.lower() == ".json" else "csv"
+        else:
+            fmt = "csv"
+            path = _audit_default_export_path(fmt)
+        try:
+            written = _audit_export_entries(visible, fmt, path)
+        except (OSError, ValueError) as e:
+            self._update_audit_detail(
+                Text(f"Erro ao exportar: {e}", style="red"),
+            )
+            return
+        self._update_audit_detail(
+            Text.from_markup(
+                f"[green]Exportado:[/green] {written}  "
+                f"([bold]{len(visible)}[/bold] entries, formato {fmt})"
+            ),
+        )
 
     def on_key(self, event) -> None:
-        """Captura Esc no filter input pra fechar sem aplicar."""
+        """Captura Esc nos input prompts pra fechar sem aplicar."""
         if event.key == "escape":
             try:
                 inp = self.query_one("#audit-filter-input", Input)
@@ -844,6 +922,15 @@ class DashboardApp(App):
                     inp.value = ""
                     self._audit_filter = {}
                     self._refresh_audit()
+                    event.stop()
+                    return
+            except Exception:
+                pass
+            try:
+                inp = self.query_one("#audit-export-input", Input)
+                if inp.has_class("active"):
+                    inp.remove_class("active")
+                    inp.value = ""
                     event.stop()
                     return
             except Exception:

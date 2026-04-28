@@ -12,14 +12,41 @@ Color scheme (D2):
 """
 from __future__ import annotations
 
+import csv
+import json
+import os
 import re
 from collections import Counter
+from dataclasses import asdict
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Literal
 
 from rich.table import Table
 from rich.text import Text
 
 from claude_dash.audit.models import AuditEntry
+
+ExportFormat = Literal["csv", "json"]
+
+# Ordem dos campos no export — fixa pra reprodutibilidade do CSV.
+# Mantem em sync com AuditEntry; mudancas aqui devem refletir tambem em
+# tests/test_audit_view.py::test_export_csv_schema.
+_EXPORT_FIELDS: tuple[str, ...] = (
+    "timestamp",
+    "hostname",
+    "session_id",
+    "tool",
+    "subagent_type",
+    "tool_use_id",
+    "status",
+    "duration_ms",
+    "perm_mode",
+    "input_sha",
+    "input_bytes",
+    "output_bytes",
+    "pid",
+)
 
 # Sessao de teste = qualquer session_id que nao seja UUID v4 valido.
 # Mantemos hide-by-default por que o hook foi exercitado com fixtures
@@ -176,6 +203,56 @@ def render_footer(entries: list[AuditEntry]) -> Text:
     txt.append(f"top: {top3_str}  ")
     txt.append(f"err={errors} ({err_pct:.1f}%)", style=err_style)
     return txt
+
+
+def _entry_to_row(e: AuditEntry) -> dict[str, str | int | None]:
+    """Converte AuditEntry pro shape exportavel (timestamp em ISO 8601)."""
+    d = asdict(e)
+    d["timestamp"] = e.timestamp.isoformat()
+    return {k: d[k] for k in _EXPORT_FIELDS}
+
+
+def default_export_path(fmt: ExportFormat, now: datetime | None = None) -> Path:
+    """Path default `~/audit-export-<ts>.<ext>` com timestamp ISO local."""
+    if now is None:
+        now = datetime.now()
+    # ISO compacto sem microssegundos: 2026-04-28T143052
+    ts = now.strftime("%Y-%m-%dT%H%M%S")
+    return Path.home() / f"audit-export-{ts}.{fmt}"
+
+
+def export_entries(
+    entries: list[AuditEntry],
+    fmt: ExportFormat,
+    path: Path,
+) -> Path:
+    """Escreve `entries` em `path` no formato `fmt` ('csv' ou 'json').
+
+    Escrita atomica via `<path>.tmp` -> `os.replace` pra evitar arquivo
+    parcial em caso de erro. Retorna o path final escrito.
+
+    Schema (mesmo p/ csv e json): _EXPORT_FIELDS na ordem definida.
+    `subagent_type` e' None pra entries que nao sao Agent — escapa como
+    string vazia em CSV, null em JSON.
+    """
+    if fmt not in ("csv", "json"):
+        raise ValueError(f"Formato invalido: {fmt!r} (use 'csv' ou 'json').")
+
+    rows = [_entry_to_row(e) for e in entries]
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    if fmt == "csv":
+        with tmp.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(_EXPORT_FIELDS))
+            writer.writeheader()
+            for r in rows:
+                # CSV nao tem null nativo; None vira "".
+                writer.writerow({k: ("" if v is None else v) for k, v in r.items()})
+    else:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+    os.replace(tmp, path)
+    return path
 
 
 def parse_filter_input(raw: str) -> dict[str, str]:
