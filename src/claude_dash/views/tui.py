@@ -11,6 +11,7 @@ import subprocess
 import time
 from collections import deque
 from pathlib import Path
+from typing import ClassVar
 
 from rich.console import Group
 from rich.panel import Panel
@@ -197,7 +198,7 @@ class DashboardApp(App):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("1", "show_tab('tab-now')", "Now"),
         Binding("2", "show_tab('tab-today')", "Today"),
         Binding("3", "show_tab('tab-tools')", "Tools"),
@@ -597,6 +598,10 @@ class DashboardApp(App):
         o log syslog que nao e legivel pelo usuario. Mostra resultado
         no painel #audit-detail. Erro amigavel se pkexec falhar — NAO
         fallback pra sudo no TTY (quebra TUI).
+
+        O subprocess roda em thread via `run_worker(thread=True)` para
+        nao bloquear o event loop do Textual durante o prompt do Polkit
+        (que pode levar varios segundos enquanto o usuario digita senha).
         """
         if not self._audit_active():
             return
@@ -617,6 +622,29 @@ class DashboardApp(App):
             )
             return
         session_id = visible[-1].session_id
+        # Placeholder imediato: usuario ve feedback enquanto Polkit pede
+        # senha. Sem isso, pareceria que a tecla `s` nao fez nada.
+        self._update_audit_detail(
+            Text(
+                f"Aguardando autorizacao (Polkit) para grep {session_id}...",
+                style="dim cyan",
+            ),
+        )
+        # `exclusive=True` cancela worker anterior se usuario apertar `s`
+        # de novo antes do primeiro terminar.
+        self.run_worker(
+            lambda: self._audit_drill_down_run(session_id),
+            thread=True,
+            exclusive=True,
+            name="audit-drill-down",
+        )
+
+    def _audit_drill_down_run(self, session_id: str) -> None:
+        """Worker thread: roda pkexec sem travar event loop.
+
+        Resultado enviado de volta ao painel via `call_from_thread`
+        (obrigatorio quando atualiza widget da thread principal).
+        """
         try:
             result = subprocess.run(
                 ["pkexec", "grep", session_id, AUDIT_SYSTEM_LOG],
@@ -630,30 +658,25 @@ class DashboardApp(App):
                     f"[bold]grep {session_id} {AUDIT_SYSTEM_LOG}[/bold]\n\n"
                     + (result.stdout or "(saida vazia)")
                 )
-                self._update_audit_detail(Text.from_markup(body))
+                content = Text.from_markup(body)
             else:
                 err = result.stderr.strip() or f"exit {result.returncode}"
-                self._update_audit_detail(
-                    Text(
-                        f"pkexec falhou: {err}\n\n"
-                        f"Rode manualmente: sudo grep {session_id} {AUDIT_SYSTEM_LOG}",
-                        style="yellow",
-                    ),
+                content = Text(
+                    f"pkexec falhou: {err}\n\n"
+                    f"Rode manualmente: sudo grep {session_id} {AUDIT_SYSTEM_LOG}",
+                    style="yellow",
                 )
         except FileNotFoundError:
-            self._update_audit_detail(
-                Text(
-                    "pkexec nao esta instalado. Instale Polkit ou rode manualmente:\n"
-                    f"sudo grep {session_id} {AUDIT_SYSTEM_LOG}",
-                    style="yellow",
-                ),
+            content = Text(
+                "pkexec nao esta instalado. Instale Polkit ou rode manualmente:\n"
+                f"sudo grep {session_id} {AUDIT_SYSTEM_LOG}",
+                style="yellow",
             )
         except subprocess.TimeoutExpired:
-            self._update_audit_detail(
-                Text("pkexec timeout (>10s). Tente novamente.", style="red"),
-            )
+            content = Text("pkexec timeout (>10s). Tente novamente.", style="red")
         except Exception as e:
-            self._update_audit_detail(Text(f"Erro: {e}", style="red"))
+            content = Text(f"Erro: {e}", style="red")
+        self.call_from_thread(self._update_audit_detail, content)
 
     def _update_audit_detail(self, content) -> None:
         with contextlib.suppress(Exception):
