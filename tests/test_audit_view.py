@@ -398,8 +398,11 @@ def test_enter_com_2plus_marcadas_dispara_compare() -> None:
     _run(run())
 
 
-def test_marks_filtram_sessao_da_visible_cache() -> None:
-    """#67-followup-5: ao marcar entry, a sessao toda some da view."""
+def test_marks_filtram_outras_entries_da_sessao_mantem_marcada() -> None:
+    """#67-followup-6: ao marcar entry, OUTRAS entries da mesma session
+    somem mas a propria marcada permanece visivel (com ✓). Sessoes nao
+    marcadas continuam totalmente visiveis.
+    """
     async def run():
         from datetime import datetime as _dt
         from datetime import timedelta as _td
@@ -413,17 +416,13 @@ def test_marks_filtram_sessao_da_visible_cache() -> None:
             await pilot.press("5")
             await pilot.pause(0.3)
 
-            # Limpa buffer de entries reais pra teste deterministico
             app._audit_entries.clear()
-            # Desativa filtro de host atual pra entries syntheticas (hostname='host')
-            # passarem; senao serao excluidas por nao baterem com CURRENT_HOSTNAME.
             app._audit_host_only_current = False
 
-            # Usa timestamp recente pra cair na janela default 24h
             base = _dt.now(tz=_tz(_td(hours=-3))) - _td(minutes=5)
-            # UUIDs v4 validos (pos 14 == 4, pos 19 in {8,9,a,b})
             sid_a = "0efd3cf4-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
             sid_b = "a1b2cccc-cccc-4ccc-8ccc-cccccccccccc"
+            # 4 entries: tu-0 e tu-1 da sid_a; tu-2 e tu-3 da sid_b
             for i in range(4):
                 app._audit_entries.append(AuditEntry(
                     timestamp=base + _td(seconds=i),
@@ -436,22 +435,75 @@ def test_marks_filtram_sessao_da_visible_cache() -> None:
             app._refresh_audit()
             await pilot.pause(0.2)
 
-            # Antes da marca: ambas as sessoes visiveis
-            sids_in_view = {e.session_id for e in app._audit_visible_cache}
-            assert sid_a in sids_in_view
-            assert sid_b in sids_in_view
+            # Antes da marca: 4 entries visiveis
+            assert len(app._audit_visible_cache) == 4
 
-            # Marca uma entry de sid_a manualmente (simula Space)
+            # Marca tu-0 (de sid_a)
             app._audit_marked.add("synthetic-tu-0")
             app._audit_table_signature = None
             app._refresh_audit()
             await pilot.pause(0.2)
 
-            # Verifica que NENHUMA entry de sid_a aparece na cache visivel
-            sids_in_view = {e.session_id for e in app._audit_visible_cache}
-            assert sid_a not in sids_in_view
-            # sid_b ainda visivel (nao foi marcado)
-            assert sid_b in sids_in_view
+            visible_tuids = {e.tool_use_id for e in app._audit_visible_cache}
+            # tu-0 (marcada) ainda visivel
+            assert "synthetic-tu-0" in visible_tuids
+            # tu-1 (mesma sessao, nao marcada) escondida
+            assert "synthetic-tu-1" not in visible_tuids
+            # tu-2 e tu-3 (sid_b, nao marcada) ainda visiveis
+            assert "synthetic-tu-2" in visible_tuids
+            assert "synthetic-tu-3" in visible_tuids
+
+
+def test_marks_em_todas_as_sessoes_mantem_marcadas_visiveis() -> None:
+    """#67-followup-6: edge case — usuario marcou entries de TODAS as
+    sessoes no buffer. Antes a tabela ficava vazia e Enter nao disparava
+    (RowSelected nao emitia em DataTable vazia). Agora as marcadas
+    permanecem visiveis pra que Enter funcione e abra o compare.
+    """
+    async def run():
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+
+        from claude_dash.audit.models import AuditEntry
+
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("5")
+            await pilot.pause(0.3)
+
+            app._audit_entries.clear()
+            app._audit_host_only_current = False
+
+            base = _dt.now(tz=_tz(_td(hours=-3))) - _td(minutes=5)
+            sid_a = "0efd3cf4-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            sid_b = "a1b2cccc-cccc-4ccc-8ccc-cccccccccccc"
+            # 2 entries, uma de cada sessao — buffer compacto
+            for i in range(2):
+                app._audit_entries.append(AuditEntry(
+                    timestamp=base + _td(seconds=i),
+                    hostname="host", pid="1",
+                    session_id=sid_a if i == 0 else sid_b,
+                    tool="Bash", tool_use_id=f"synthetic-tu-{i}",
+                    status="success", duration_ms=10, perm_mode="auto",
+                    input_sha="0", input_bytes=10, output_bytes=20,
+                ))
+
+            # Marca AMBAS as entries (cada uma e' a unica de sua sessao)
+            app._audit_marked.add("synthetic-tu-0")
+            app._audit_marked.add("synthetic-tu-1")
+            app._audit_table_signature = None
+            app._refresh_audit()
+            await pilot.pause(0.2)
+
+            # Tabela NAO esta vazia — as 2 marcadas ficam visiveis
+            assert len(app._audit_visible_cache) == 2
+            # Enter dispara compare
+            app.action_audit_enter_action()
+            await pilot.pause(0.1)
+            # Compare path executou: marcas limpas
+            assert len(app._audit_marked) == 0
     _run(run())
 
 

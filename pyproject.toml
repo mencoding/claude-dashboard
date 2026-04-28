@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-dashboard"
-version = "0.15.13"
+version = "0.15.14"
 description = "TUI dashboard for Claude Code sessions, tokens, tools and cost"
 readme = "README.md"
 requires-python = ">=3.12"
