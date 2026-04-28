@@ -227,3 +227,111 @@ def test_envelope_em_rate_limits_nao_instalado() -> None:
         result = mcp_server.rate_limits()
     assert result["_schema_version"] == 1
     assert result["installed"] is False
+
+
+# ---- Audit tools (#54-d3) -------------------------------------------
+
+
+def test_audit_entries_arquivo_inexistente() -> None:
+    """Tail de path inexistente retorna lista vazia, sem erro."""
+    from pathlib import Path
+    fake = Path("/tmp/claude-dash-test-nonexistent.log")
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", fake):
+        result = mcp_server.audit_entries(hours=24)
+    assert result["_schema_version"] == 1
+    assert result["total_in_window"] == 0
+    assert result["entries"] == []
+
+
+def test_audit_entries_filtra_por_tool(tmp_path) -> None:
+    """Filtro tool aplicado corretamente."""
+    log = tmp_path / "sessions.log"
+    log.write_text(
+        '<134>1 2026-04-28T00:00:29.223+00:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="0efd3cf4-96ef-41b7-9d41-f91ec539becd" '
+        'tool="Bash" tool_use_id="x1" status="success" duration_ms="50" '
+        'perm_mode="auto" input_sha="0" input_bytes="0" output_bytes="0"]\n'
+        '<134>1 2026-04-28T00:00:30.000+00:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="0efd3cf4-96ef-41b7-9d41-f91ec539becd" '
+        'tool="Read" tool_use_id="x2" status="success" duration_ms="10" '
+        'perm_mode="auto" input_sha="0" input_bytes="0" output_bytes="0"]\n',
+        encoding="utf-8",
+    )
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        # Janela bem grande pra cobrir o timestamp fixo da fixture
+        result = mcp_server.audit_entries(tool="Bash", hours=24 * 365 * 100)
+    assert result["returned"] == 1
+    assert result["entries"][0]["tool"] == "Bash"
+
+
+def test_audit_entries_filtra_por_session_prefix(tmp_path) -> None:
+    log = tmp_path / "sessions.log"
+    log.write_text(
+        '<134>1 2026-04-28T00:00:29.223+00:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="0efd3cf4-96ef-41b7-9d41-f91ec539becd" '
+        'tool="Bash" tool_use_id="x1" status="success" duration_ms="50" '
+        'perm_mode="auto" input_sha="0" input_bytes="0" output_bytes="0"]\n'
+        '<134>1 2026-04-28T00:00:30.000+00:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="aabb1234-aaaa-4aaa-8aaa-aaaaaaaaaaaa" '
+        'tool="Read" tool_use_id="x2" status="success" duration_ms="10" '
+        'perm_mode="auto" input_sha="0" input_bytes="0" output_bytes="0"]\n',
+        encoding="utf-8",
+    )
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        result = mcp_server.audit_entries(session="0efd3", hours=24 * 365 * 100)
+    assert result["returned"] == 1
+    assert result["entries"][0]["session_id"].startswith("0efd3")
+
+
+def test_audit_entries_envelope_e_filters_applied(tmp_path) -> None:
+    log = tmp_path / "sessions.log"
+    log.write_text("", encoding="utf-8")
+    with patch.object(mcp_server, "AUDIT_LOG_PATH", log):
+        result = mcp_server.audit_entries(tool="Bash", hours=12, limit=100)
+    assert result["_schema_version"] == 1
+    assert result["filters_applied"]["tool"] == "Bash"
+    assert result["filters_applied"]["hours"] == 12
+    assert result["filters_applied"]["limit"] == 100
+
+
+def test_audit_session_partial_existe(tmp_path) -> None:
+    log = tmp_path / "sessions.log"
+    log.write_text(
+        '<134>1 2026-04-28T00:00:29.223+00:00 PREDATOR claude-code 1 TOOLCALL '
+        '[audit@iris session="0efd3cf4-96ef-41b7-9d41-f91ec539becd" '
+        'tool="Bash" tool_use_id="x1" status="error" duration_ms="100" '
+        'perm_mode="auto" input_sha="0" input_bytes="0" output_bytes="0"]\n'
+        '<134>1 2026-04-28T00:00:35.000+00:00 PREDATOR claude-code 1 TOOLCALL '
+        '[audit@iris session="0efd3cf4-96ef-41b7-9d41-f91ec539becd" '
+        'tool="Bash" tool_use_id="x2" status="success" duration_ms="50" '
+        'perm_mode="auto" input_sha="0" input_bytes="0" output_bytes="0"]\n',
+        encoding="utf-8",
+    )
+    with patch.object(
+        mcp_server, "build_partial_stats_from_audit",
+        lambda sid: __import__("claude_dash.audit.partial_stats", fromlist=[
+            "build_partial_stats_from_audit"
+        ]).build_partial_stats_from_audit(sid, audit_log_path=log),
+    ):
+        result = mcp_server.audit_session_partial("0efd3")
+    assert result["_schema_version"] == 1
+    assert result["found"] is True
+    assert result["hostname"] == "PREDATOR"
+    assert result["total_calls"] == 2
+    assert result["error_count"] == 1
+    assert result["error_rate"] == 0.5
+
+
+def test_audit_session_partial_nao_existe(tmp_path) -> None:
+    log = tmp_path / "sessions.log"
+    log.write_text("", encoding="utf-8")
+    with patch.object(
+        mcp_server, "build_partial_stats_from_audit",
+        lambda sid: __import__("claude_dash.audit.partial_stats", fromlist=[
+            "build_partial_stats_from_audit"
+        ]).build_partial_stats_from_audit(sid, audit_log_path=log),
+    ):
+        result = mcp_server.audit_session_partial("nonexistent")
+    assert result["_schema_version"] == 1
+    assert result["found"] is False
+    assert "error" in result

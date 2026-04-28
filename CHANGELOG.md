@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-04-28
+
+### Added
+- MCP tool `audit_entries(session, tool, status, host, hours, limit)` — exposes audit log metadata via MCP. Wraps `views/audit.filter_entries` with prefix-match filters; runs `correlate_start_end` first so end entries override their corresponding start. Returns most recent entries first (caller can `head` the result). Reads `~/.claude/iris/audit/sessions.log` only — `/var/log/claude/tools.log` (with `cmd`/`path`/`url`) is intentionally NOT exposed via MCP. Schema documented inline in docstring. Closes part of #54 (issue derivada d3).
+- MCP tool `audit_session_partial(sid)` — drill-down parcial por sessão sem precisar do JSONL local. Útil pra meta-agentes consultando sessões cross-device ou sessões cujo transcript foi rotacionado. Wraps `audit.partial_stats.build_partial_stats_from_audit`. Retorna `{found, session_id, hostname, first_ts, last_ts, duration_ms, total_calls, error_count, error_rate, top_tools}`.
+- 6 testes novos em `tests/test_mcp_server.py` cobrindo arquivo inexistente, filtros por tool e session prefix, envelope/filters_applied, drill-down found/not-found.
+
 ## [0.15.2] - 2026-04-28
 
 ### Added
