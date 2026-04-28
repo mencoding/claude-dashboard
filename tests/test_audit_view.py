@@ -153,15 +153,15 @@ def test_color_for_agent_skill_mcp_azul() -> None:
 
 def test_render_table_nao_crasha_vazio() -> None:
     table = render_table([])
-    # Rich Table tem 6 colunas; nao deve levantar
-    assert len(table.columns) == 6
+    # 7 colunas: time, sess, host, tool, dur_ms, in, out (host adicionado em #55)
+    assert len(table.columns) == 7
 
 
 def test_render_table_inclui_subagent_type_no_label() -> None:
     e = _entry(tool="Agent", subagent_type="general-purpose")
     table = render_table([e])
-    # tool column = idx 2; primeira linha
-    cell = next(iter(table.columns[2].cells))
+    # tool agora esta na coluna idx 3 (host inserido antes em #55)
+    cell = next(iter(table.columns[3].cells))
     assert "Agent" in cell
     assert "general-purpose" in cell
 
@@ -346,3 +346,87 @@ def test_export_path_nao_gravavel_levanta_oserror(tmp_path) -> None:
     bad = tmp_path / "no-such-dir" / "out.csv"
     with pytest.raises(OSError):
         export_entries([_entry()], "csv", bad)
+
+
+# ---- Hostname: filter, render, parse (#55) ---------------------------
+
+
+def _entry_host(host: str, tool: str = "Bash") -> AuditEntry:
+    """Helper variante de _entry com hostname customizado."""
+    base = datetime(2026, 4, 28, 0, 0, 0, tzinfo=timezone(timedelta(hours=-3)))
+    return AuditEntry(
+        timestamp=base,
+        hostname=host,
+        pid="1",
+        session_id="0efd3cf4-96ef-41b7-9d41-f91ec539becd",
+        tool=tool,
+        tool_use_id=f"x-{host}",
+        status="success",
+        duration_ms=100,
+        perm_mode="auto",
+        input_sha="0",
+        input_bytes=10,
+        output_bytes=20,
+    )
+
+
+def test_filter_current_host_default_oculta_outros() -> None:
+    aqui = _entry_host("RET-DTI-601048")
+    la = _entry_host("PREDATOR")
+    out = filter_entries(
+        [aqui, la], window_hours=None, current_host="RET-DTI-601048"
+    )
+    assert out == [aqui]
+
+
+def test_filter_current_host_none_mostra_todos() -> None:
+    aqui = _entry_host("RET-DTI-601048")
+    la = _entry_host("PREDATOR")
+    out = filter_entries([aqui, la], window_hours=None, current_host=None)
+    assert len(out) == 2
+
+
+def test_filter_current_host_inclui_hostname_vazio() -> None:
+    """Logs antigos pre-#55 sem hostname devem passar — sao 'sem host conhecido'."""
+    aqui = _entry_host("RET-DTI-601048")
+    sem_host = _entry_host("")
+    out = filter_entries(
+        [aqui, sem_host], window_hours=None, current_host="RET-DTI-601048"
+    )
+    assert len(out) == 2
+
+
+def test_filter_host_explicit_prefix_match() -> None:
+    pre = _entry_host("PREDATOR")
+    ret = _entry_host("RET-DTI-601048")
+    out = filter_entries(
+        [pre, ret], filters={"host": "PRED"}, window_hours=None
+    )
+    assert out == [pre]
+
+
+def test_parse_filter_host() -> None:
+    assert parse_filter_input("/host=PREDATOR") == {"host": "PREDATOR"}
+    assert parse_filter_input("/host=") == {}
+
+
+def test_render_table_inclui_coluna_host() -> None:
+    table = render_table([_entry_host("PREDATOR")])
+    # 7 colunas: time, sess, host, tool, dur_ms, in, out
+    assert len(table.columns) == 7
+    # host esta na coluna idx 2
+    cell = next(iter(table.columns[2].cells))
+    assert "PREDATOR" in cell
+
+
+def test_render_table_dim_para_outro_host() -> None:
+    pre = _entry_host("PREDATOR")
+    table = render_table([pre], current_host="RET-DTI-601048")
+    # Quando entry e' de outro host, render aplica row_styles="dim".
+    # Rich.Table guarda style por linha; checamos qualquer celula
+    # ter style 'dim' indicando que o flag pegou.
+    rendered = list(table.rows)
+    assert len(rendered) == 1
+    # row.style ou cells inheritados — Rich mantem _row_styles na Table.
+    # Mais simples: checamos que a Table tem pelo menos uma row com style dim.
+    assert any("dim" in str(getattr(row, "style", "")) for row in rendered)
