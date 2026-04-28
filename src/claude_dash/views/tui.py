@@ -7,7 +7,6 @@ uso scriptável.
 from __future__ import annotations
 
 import contextlib
-import subprocess
 import time
 from collections import deque
 from pathlib import Path
@@ -695,16 +694,19 @@ class DashboardApp(App):
         self._refresh_audit()
 
     def action_audit_drill_down_root(self) -> None:
-        """Tecla `s`: chama `pkexec grep <session> /var/log/claude/tools.log` (D6).
+        """Tecla `s`: drill-down da row selecionada (D6, simplificado v0.14.3).
 
-        Drill-down externo: roda o grep com privilegio (Polkit) pra ler
-        o log syslog que nao e legivel pelo usuario. Mostra resultado
-        no painel #audit-detail. Erro amigavel se pkexec falhar — NAO
-        fallback pra sudo no TTY (quebra TUI).
+        Le `/var/log/claude/tools.log` direto (arquivo e' rw-r----- com
+        grupo `adm`; usuario tipico esta no grupo). Sem pkexec, sem
+        Polkit, sem prompt de senha. Filtra por session_id da row no
+        cursor da DataTable e mostra entries no painel #audit-detail.
 
-        O subprocess roda em thread via `run_worker(thread=True)` para
-        nao bloquear o event loop do Textual durante o prompt do Polkit
-        (que pode levar varios segundos enquanto o usuario digita senha).
+        Se usuario nao esta no grupo `adm`, retorna mensagem orientando
+        o ajuste (PermissionError -> sugere `usermod -aG adm`). Sem
+        fallback automatico pra sudo (quebraria TUI).
+
+        Sincrono: tools.log tipico e' < 1MB, leitura e filter < 10ms.
+        Nao precisa worker thread.
         """
         if not self._audit_active():
             return
@@ -731,87 +733,52 @@ class DashboardApp(App):
             )
             return
         session_id = visible[cursor_row].session_id
-        # Placeholder imediato: usuario ve feedback enquanto Polkit pede
-        # senha. Sem isso, pareceria que a tecla `s` nao fez nada.
-        self._update_audit_detail(
-            Text(
-                f"Aguardando autorizacao (Polkit) para grep {session_id}...",
-                style="dim cyan",
-            ),
-        )
-        # `exclusive=True` cancela worker anterior se usuario apertar `s`
-        # de novo antes do primeiro terminar.
-        self.run_worker(
-            lambda: self._audit_drill_down_run(session_id),
-            thread=True,
-            exclusive=True,
-            name="audit-drill-down",
-        )
 
-    def _audit_drill_down_run(self, session_id: str) -> None:
-        """Worker thread: roda pkexec sem travar event loop.
-
-        Resultado enviado de volta ao painel via `call_from_thread`
-        (obrigatorio quando atualiza widget da thread principal).
-        """
+        # Cap em 50 ultimas linhas pra nao sobrecarregar o painel.
+        max_lines = 50
         try:
-            # `--disable-internal-agent`: forca usar agente Polkit grafico
-            # (polkit-gnome/-mate). Sem isso, o pkexec cai em fallback
-            # texto que tenta ler senha do TTY — mas o Textual ja monopoliza
-            # o TTY, entao trava indefinidamente.
-            # `stdin=DEVNULL` + `start_new_session=True`: desconecta o
-            # subprocess do controlling terminal do Textual, evitando
-            # qualquer tentativa de ler senha pelo TTY.
-            # timeout 60s: usuario pode demorar pra responder o prompt.
-            result = subprocess.run(
-                [
-                    "pkexec", "--disable-internal-agent",
-                    "grep", session_id, AUDIT_SYSTEM_LOG,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            if result.returncode == 0:
-                body = (
-                    f"[bold]grep {session_id} {AUDIT_SYSTEM_LOG}[/bold]\n\n"
-                    + (result.stdout or "(saida vazia)")
-                )
-                content = Text.from_markup(body)
-            elif result.returncode == 127:
-                # 127 = no authentication agent found
-                content = Text.from_markup(
-                    "[bold yellow]Nenhum agente Polkit grafico ativo.[/bold yellow]\n"
-                    "Inicie um (ex.: gnome ou mate) e tente de novo:\n\n"
-                    "  /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &\n"
-                    "  # ou\n"
-                    "  /usr/libexec/polkit-mate-authentication-agent-1 &\n\n"
-                    f"Ou rode manualmente:\n  sudo grep {session_id} {AUDIT_SYSTEM_LOG}"
-                )
-            else:
-                err = result.stderr.strip() or f"exit {result.returncode}"
-                content = Text(
-                    f"pkexec falhou: {err}\n\n"
-                    f"Rode manualmente: sudo grep {session_id} {AUDIT_SYSTEM_LOG}",
-                    style="yellow",
-                )
+            with open(AUDIT_SYSTEM_LOG, encoding="utf-8", errors="replace") as f:
+                matching = [line for line in f if session_id in line]
         except FileNotFoundError:
-            content = Text(
-                "pkexec nao esta instalado. Instale Polkit ou rode manualmente:\n"
-                f"sudo grep {session_id} {AUDIT_SYSTEM_LOG}",
-                style="yellow",
+            self._update_audit_detail(
+                Text(
+                    f"{AUDIT_SYSTEM_LOG} nao existe. Rode `claude-dash setup-audit`.",
+                    style="yellow",
+                ),
             )
-        except subprocess.TimeoutExpired:
-            content = Text(
-                "pkexec timeout (>60s). Cancelou ou nao respondeu o prompt?",
-                style="red",
-            )
+            return
+        except PermissionError:
+            self._update_audit_detail(Text.from_markup(
+                "[bold yellow]Sem permissao pra ler /var/log/claude/tools.log[/bold yellow]\n"
+                "Adicione seu usuario ao grupo `adm` (re-login depois):\n\n"
+                "  sudo usermod -aG adm $USER\n\n"
+                f"Ou leia manualmente como root:\n  sudo grep {session_id} {AUDIT_SYSTEM_LOG}"
+            ))
+            return
         except Exception as e:
-            content = Text(f"Erro: {e}", style="red")
-        self.call_from_thread(self._update_audit_detail, content)
+            self._update_audit_detail(Text(f"Erro: {e}", style="red"))
+            return
+
+        if not matching:
+            self._update_audit_detail(
+                Text(
+                    f"Nenhuma entry para session={session_id} em {AUDIT_SYSTEM_LOG}.",
+                    style="dim",
+                ),
+            )
+            return
+
+        truncated = len(matching) > max_lines
+        shown = matching[-max_lines:]
+        header = (
+            f"[bold]grep {session_id} {AUDIT_SYSTEM_LOG}[/bold]  "
+            f"({len(matching)} linhas{', ultimas ' + str(max_lines) if truncated else ''})\n\n"
+        )
+        # Text.from_markup interpretaria colchetes do log como markup;
+        # constrói Text manual: header em markup, body como texto plano.
+        text_obj = Text.from_markup(header)
+        text_obj.append("".join(shown))
+        self._update_audit_detail(text_obj)
 
     def _update_audit_detail(self, content) -> None:
         with contextlib.suppress(Exception):

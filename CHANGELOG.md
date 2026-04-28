@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.14.2] - 2026-04-28
+## [0.14.3] - 2026-04-28
+
+### Changed
+- TUI: `Audit` tab drill-down (`s` key) now reads `/var/log/claude/tools.log` directly instead of going through `pkexec`. The log file is `0640` with group `adm`, and users on Debian-family systems are typically in that group already, so direct read works without any password prompt. Falls back to a helpful message suggesting `sudo usermod -aG adm $USER` for users not in the group. No more Polkit dependency, no more hangs, no more password prompts.
+
+### Removed
+- `subprocess` and Polkit-related code paths in the audit drill-down (the entire `--disable-internal-agent` + `start_new_session=True` machinery was over-engineering once we realized direct read works for the target audience).
 
 ### Added
 - TUI: arrow keys `←` / `→` cycle through the 5 tabs (App-level bindings without priority — DataTable and Input still consume them for internal navigation when focused).
@@ -145,7 +151,8 @@ First stable release.
 - Pricing table validated against the official Anthropic table; Opus correctly priced 3× cheaper than the previous estimate.
 - Cost-band coloring across all views ([#6]).
 
-[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/mencoding/claude-dashboard/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/mencoding/claude-dashboard/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/mencoding/claude-dashboard/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/mencoding/claude-dashboard/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/mencoding/claude-dashboard/compare/v0.13.1...v0.14.0
