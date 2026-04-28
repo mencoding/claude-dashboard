@@ -1,6 +1,8 @@
 """Monta SessionStats a partir de transcripts, com cache incremental."""
 from __future__ import annotations
 
+import functools
+import time
 from pathlib import Path
 
 from claude_dash import cache
@@ -20,6 +22,44 @@ from claude_dash.parser import (
     iter_tool_uses,
 )
 from claude_dash.pricing import normalize_model
+
+# Memoização TTL para coletas pesadas. Não thread-safe (a TUI roda em
+# single-thread via Textual), sem evicção por tamanho (poucas chaves
+# possíveis: nome da função x argumentos imutáveis pequenos).
+#
+# Aplicado em `collect_live_sessions` e `collect_sessions_since` — ambas
+# são chamadas múltiplas vezes em janela curta (on_mount agrupa 4
+# refreshes; refresh manual `r` pode cair logo após tick do auto-refresh
+# de 2s). TTL=1.0s garante que o próximo tick do `_refresh_now` (cada
+# 2s) sempre invalide o cache — margem 2x sobre o intervalo do timer.
+#
+# IMPORTANTE: o retorno é a lista interna do cache; chamadores NÃO devem
+# mutá-la. Os call sites atuais só leem (ordenam para display, iteram
+# para somar) — se um futuro call site precisar mutar, fazer .copy()
+# explicitamente no chamador.
+_cache: dict[tuple, tuple[float, object]] = {}
+
+
+def _ttl_cached(seconds: float):
+    """Decorator de cache com TTL curto."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            key = (fn.__name__, args, tuple(sorted(kwargs.items())))
+            now = time.monotonic()
+            hit = _cache.get(key)
+            if hit is not None and now - hit[0] < seconds:
+                return hit[1]
+            result = fn(*args, **kwargs)
+            _cache[key] = (now, result)
+            return result
+
+        # Exposto para testes e para invalidação manual em casos
+        # excepcionais (ex: mudança de relógio do sistema).
+        wrapper.cache_clear = lambda: _cache.clear()
+        return wrapper
+
+    return decorator
 
 
 def _apply_entry(entry: dict, stats: SessionStats) -> None:
@@ -182,6 +222,7 @@ def aggregate_transcript_since(
     return stats
 
 
+@_ttl_cached(1.0)
 def collect_sessions_since(since_ms: int) -> list[SessionStats]:
     """Coleta SessionStats de sessões com atividade desde `since_ms`.
 
@@ -337,6 +378,7 @@ def collect_tool_usage_since(since_ms: int) -> dict[str, ToolUsageStats]:
     return out
 
 
+@_ttl_cached(1.0)
 def collect_live_sessions(use_cache: bool = True) -> list[SessionStats]:
     """Coleta SessionStats de todas as sessões atualmente vivas.
 
