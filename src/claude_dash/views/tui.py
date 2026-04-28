@@ -40,6 +40,7 @@ from claude_dash.aggregator import (
     extract_turns,
 )
 from claude_dash.audit import CURRENT_HOSTNAME
+from claude_dash.audit.alerts import ErrorAlertEmitter, resolve_alert_level
 from claude_dash.audit.models import AuditEntry
 from claude_dash.audit.tail import IncrementalTailer
 from claude_dash.discover import (
@@ -261,6 +262,11 @@ class DashboardApp(App):
         self._audit_filter: dict[str, str] = {}
         self._audit_window_hours: float | None = 24.0
         self._audit_show_tests: bool = False
+        # Emitter de alertas pra tool errors (#37). Nivel resolvido do
+        # env CLAUDE_DASH_AUDIT_ALERT_LEVEL no startup; mudancas em
+        # runtime exigem restart (padrao pra env vars).
+        # textual_notify e' setado em on_mount quando o app esta pronto.
+        self._error_alert_emitter = ErrorAlertEmitter(level=resolve_alert_level())
         # Filtro implicito por hostname (#55): default = so este host.
         # Toggle pela tecla `h`. Quando False, mostra tudo (hosts alheios
         # em dim). Filtro explicito `/host=<name>` em `_audit_filter`
@@ -277,6 +283,13 @@ class DashboardApp(App):
         # Cache da lista filtrada visivel: drill-down `s` mapea
         # cursor_row -> entry. Atualizado a cada _refresh_audit.
         self._audit_visible_cache: list = []
+        # Flag pra distinguir movimento programatico de cursor (auto-tail
+        # do _populate_audit_table) de movimento do usuario (↑/↓ no
+        # DataTable). Evento RowHighlighted dispara em ambos os casos —
+        # antes de chamar move_cursor, setamos a flag; o handler da
+        # ignora um evento e reseta. Qualquer evento subsequente sem
+        # flag significa interacao do usuario -> marca pausa.
+        self._audit_cursor_managed: bool = False
         # Render incremental: tracking pra evitar full rebuild a cada tick.
         # Signature do filtro (filter+window+show_tests): se mudar, rebuild.
         self._audit_table_signature: tuple | None = None
@@ -338,6 +351,12 @@ class DashboardApp(App):
         self._refresh_session_list()
         # Inicializa tailer e renderiza primeiro estado da aba Audit.
         self._audit_tailer = IncrementalTailer(AUDIT_LOG_PATH)
+        # Liga callback do Textual notify ao emitter de alertas (#37).
+        # severity="error" => toast vermelho do Textual; titulo identifica
+        # origem pra distinguir de outros notifies.
+        self._error_alert_emitter._textual_notify = lambda msg: self.notify(
+            msg, severity="error", title="Audit",
+        )
         self._populate_audit_keys()
         self._refresh_audit()
         # Auto-refresh só da Now (demais via `r` manual). Audit tem
@@ -555,7 +574,9 @@ class DashboardApp(App):
 
         Mesmo quando a aba nao esta ativa, continuamos drenando o
         tailer pra nao perder entries ate o usuario abrir a aba. So a
-        renderizacao e gateada pela aba ativa.
+        renderizacao e gateada pela aba ativa. Alertas de erro (#37)
+        disparam INDEPENDENTE da aba ativa — usuario quer saber de erro
+        mesmo que esteja olhando Now/Today.
         """
         if self._audit_tailer is None:
             return
@@ -565,6 +586,10 @@ class DashboardApp(App):
             return
         if new_entries:
             self._audit_entries.extend(new_entries)
+            # Dispara alertas pra erros nas entries que acabaram de chegar.
+            # Nivel `none` no emitter -> no-op rapido.
+            with contextlib.suppress(Exception):
+                self._error_alert_emitter.emit(new_entries)
         if self._audit_active():
             self._refresh_audit()
 
@@ -719,15 +744,17 @@ class DashboardApp(App):
         self._audit_first_visible_key = first_key
 
         # Cursor: so move pro fim se usuario estava no fim (auto-tail) E
-        # nao houve interacao recente (respeita pausa do D8). Sem o check
-        # de pausa, mover o cursor de volta pra penultima linha era
-        # imediatamente desfeito no proximo tick (1s) — barra visual
-        # "voltava sozinha" pro fim.
+        # nao houve interacao recente (respeita pausa do D8). Marca a
+        # flag _audit_cursor_managed antes pra que o handler de
+        # RowHighlighted ignore este evento — de outro modo, nosso
+        # proprio movimento programatico seria interpretado como
+        # interacao do usuario e re-pausaria a aba indefinidamente.
         if (
             dt.row_count > 0
             and was_at_end
             and not self._is_audit_paused()
         ):
+            self._audit_cursor_managed = True
             dt.move_cursor(row=dt.row_count - 1, animate=False)
 
     def _populate_audit_keys(self) -> None:
@@ -962,6 +989,31 @@ class DashboardApp(App):
         # Usuário pressionou Enter (ou clicou) numa linha da lista
         if isinstance(event.item, SessionListItem):
             self._render_session_detail(event.item.sid)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Detecta movimento de cursor pelo usuario na tabela de Audit.
+
+        Evento dispara em qualquer mudanca de cursor — programatica ou
+        via teclado/mouse. Usamos a flag _audit_cursor_managed pra
+        ignorar nossos proprios movimentos (auto-tail). Qualquer evento
+        sem flag = usuario mexeu, marca pausa pro auto-tail respeitar.
+
+        Necessario porque setas em DataTable nao bubbla pra App.on_key
+        (Textual chama event.stop() apos cursor_up/down) — sem este
+        handler, _audit_last_user_action ficava em 0 e a pausa nunca
+        ativava pra ↑/↓.
+        """
+        if not self._audit_active():
+            return
+        try:
+            if event.data_table.id != "audit-table":
+                return
+        except Exception:
+            return
+        if self._audit_cursor_managed:
+            self._audit_cursor_managed = False
+            return
+        self._mark_audit_user_action()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Prompts da aba Audit: filter aplica filtro; export grava arquivo."""

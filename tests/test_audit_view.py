@@ -269,6 +269,59 @@ def test_tecla_question_toggle_test_sessions() -> None:
     _run(run())
 
 
+def test_cursor_user_pausa_auto_tail() -> None:
+    """Movimento de cursor pelo usuario deve pausar o auto-tail.
+
+    Regressao: setas em DataTable nao bubblam pra App.on_key, entao
+    _audit_last_user_action ficava em 0 e o tick seguinte forcava cursor
+    de volta pro fim. Fix usa on_data_table_row_highlighted (que dispara
+    pra qualquer movimento).
+    """
+    async def run():
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+
+        from claude_dash.audit.models import AuditEntry
+
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("5")
+            await pilot.pause(0.2)
+
+            # Popula tabela com entries sintéticas.
+            entries = [
+                AuditEntry(
+                    timestamp=_dt(2026, 4, 28, 0, 0, i, tzinfo=_tz(_td(hours=-3))),
+                    hostname="host", pid="1",
+                    session_id="0efd3cf4-96ef-41b7-9d41-f91ec539becd",
+                    tool="Bash", tool_use_id=f"x-{i}", status="success",
+                    duration_ms=10, perm_mode="auto", input_sha="0",
+                    input_bytes=10, output_bytes=20,
+                )
+                for i in range(5)
+            ]
+            app._audit_entries.extend(entries)
+            # Reseta last_user_action pra simular "auto-tail estavel".
+            app._refresh_audit()
+            app._audit_last_user_action = 0
+            app._audit_paused = False
+            await pilot.pause(0.1)
+
+            # Simula user pressionando ↑ — DataTable consome e move cursor.
+            # Setas NAO bubblam pra App.on_key; sem o handler de
+            # RowHighlighted, _audit_last_user_action ficava em 0.
+            await pilot.press("up")
+            await pilot.pause(0.1)
+
+            # on_data_table_row_highlighted detectou o movimento e marcou
+            # a interacao -> pausa esta ativa.
+            assert app._audit_last_user_action != 0
+            assert app._is_audit_paused()
+    _run(run())
+
+
 @pytest.mark.parametrize("key", ["1", "2", "3", "4", "5"])
 def test_todas_abas_sao_acessiveis(key: str) -> None:
     async def run():
