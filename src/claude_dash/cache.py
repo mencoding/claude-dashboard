@@ -18,7 +18,6 @@ from pathlib import Path
 
 from claude_dash.models import SessionStats, Usage
 
-
 CACHE_DIR = Path(os.environ.get("CLAUDE_DASH_CACHE", Path.home() / ".cache" / "claude-dash"))
 
 # Schema do payload do cache. Bumpar quando novos campos do SessionStats

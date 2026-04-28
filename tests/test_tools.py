@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from claude_dash.discover import TranscriptRef
 from claude_dash.models import ToolUsageStats
 from claude_dash.views.tools import _histogram_bar, _hourly_aggregate, _tools_table
-
 
 # --- histograma ASCII ---------------------------------------------------
 
@@ -169,7 +167,6 @@ def test_tools_table_percentages_use_full_total() -> None:
         for i in range(12)
     }
     panel = _tools_table(tools)
-    stripped = re.sub(r"\[/?[^\]]*\]", "", str(panel.renderable))
     # Como o pane é uma Table (não string), a comparação é por renderização
     # final — vou apenas garantir que não há exceção e estrutura básica
     assert panel is not None

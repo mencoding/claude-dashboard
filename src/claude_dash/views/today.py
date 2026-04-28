@@ -13,14 +13,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from claude_dash.account import read_account_info
 from claude_dash.aggregator import collect_sessions_since
 from claude_dash.models import SessionStats
-from claude_dash.pricing import cost_of
-from claude_dash.account import read_account_info
 from claude_dash.views.now import (
     _account_line,
     _cost_label,
-    _fmt_duration,
     _fmt_short_cwd,
     _fmt_tokens,
     _session_label,
@@ -58,7 +56,7 @@ def _header(sessions: list[SessionStats], since_ms: int) -> Panel:
     header.append(f"{len(sessions)}", style="bold cyan")
     header.append(" sessões   ", style="dim")
     header.append(f"[{alive} vivas · {dead} mortas]\n", style="dim")
-    header.append(f" Tokens ", style="dim")
+    header.append(" Tokens ", style="dim")
     header.append(f"{_fmt_tokens(total_tokens)}", style="bold")
     header.append(f"   {_cost_label(acc)} ", style="dim")
     header.append(f"${total_cost:,.2f}", style="bold yellow")
@@ -151,7 +149,10 @@ def _tools_aggregate(sessions: list[SessionStats], top_n: int = 10) -> Panel:
     lines = []
     for name, count in top:
         pct = 100 * count / total_calls if total_calls else 0
-        lines.append(f"  [bold cyan]{name:<16}[/bold cyan] [bold]{count:>4}[/bold]  [dim]({pct:4.1f}%)[/dim]")
+        lines.append(
+            f"  [bold cyan]{name:<16}[/bold cyan]"
+            f" [bold]{count:>4}[/bold]  [dim]({pct:4.1f}%)[/dim]"
+        )
 
     content = "\n".join(lines)
     if len(totals) > top_n:

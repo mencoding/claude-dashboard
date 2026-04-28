@@ -65,7 +65,7 @@ def test_today_summary_aggregates_correctly() -> None:
     assert result["sessions_count"] == 2
     assert result["sessions_alive"] == 1
     assert result["sessions_dead"] == 1
-    # Opus input $5/M × 3M tokens = $15
+    # Opus input $5/M x 3M tokens = $15
     assert result["cost_usd"] == 15.0
     assert result["tokens_total"] == 3_000_000
 
@@ -107,7 +107,7 @@ def test_workflow_snapshot_alert_on_high_cost() -> None:
 
 def test_workflow_snapshot_suppresses_cost_alert_on_flat_rate() -> None:
     """Em billing flat-rate, alerta de custo diário é suprimido."""
-    from claude_dash.account import AccountInfo, BILLING_FLAT_RATE
+    from claude_dash.account import BILLING_FLAT_RATE, AccountInfo
 
     big_spender = _mk_session(
         cost_usage=Usage(input_tokens=50_000_000),

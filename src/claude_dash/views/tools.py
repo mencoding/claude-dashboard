@@ -17,7 +17,6 @@ from rich.text import Text
 from claude_dash.aggregator import collect_tool_usage_since
 from claude_dash.models import ToolUsageStats
 
-
 DEFAULT_WINDOW = timedelta(hours=24)
 
 

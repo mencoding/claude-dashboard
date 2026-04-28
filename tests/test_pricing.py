@@ -30,16 +30,16 @@ class TestCostOf:
         assert cost_of("claude-opus-4-7", Usage(input_tokens=1_000_000)) == pytest.approx(5.0)
 
     def test_opus_1m_output_tokens(self) -> None:
-        # 1M output tokens @ $25/M = $25 (5× input)
+        # 1M output tokens @ $25/M = $25 (5x input)
         assert cost_of("claude-opus-4-7", Usage(output_tokens=1_000_000)) == pytest.approx(25.0)
 
     def test_opus_1m_cache_read(self) -> None:
-        # 1M cache read @ $0.50/M = $0.50 (0.1× input)
+        # 1M cache read @ $0.50/M = $0.50 (0.1x input)
         assert cost_of("claude-opus-4-7", Usage(cache_read=1_000_000)) == pytest.approx(0.5)
 
     def test_opus_cache_write_1h_vs_5m(self) -> None:
-        # 1h cache write deve ser ~1.6× mais caro que 5m cache write
-        # (invariantes: 5m = 1.25× input, 1h = 2× input)
+        # 1h cache write deve ser ~1.6x mais caro que 5m cache write
+        # (invariantes: 5m = 1.25x input, 1h = 2x input)
         c_5m = cost_of("claude-opus-4-7", Usage(cache_creation_5m=1_000_000))
         c_1h = cost_of("claude-opus-4-7", Usage(cache_creation_1h=1_000_000))
         assert c_5m == pytest.approx(6.25)
@@ -98,7 +98,13 @@ class TestPricingInvariants:
 
 class TestUsage:
     def test_total_sums_all_fields(self) -> None:
-        u = Usage(input_tokens=1, output_tokens=2, cache_creation_1h=3, cache_creation_5m=4, cache_read=5)
+        u = Usage(
+            input_tokens=1,
+            output_tokens=2,
+            cache_creation_1h=3,
+            cache_creation_5m=4,
+            cache_read=5,
+        )
         assert u.total == 15
 
     def test_iadd_mutates_in_place(self) -> None:

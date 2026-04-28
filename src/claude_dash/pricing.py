@@ -5,10 +5,10 @@ https://claude.com/pricing e
 https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 
 Invariantes documentados pela Anthropic (consistentes entre modelos):
-- Output = 5× Input
-- Cache read = 0.1× Input
-- Cache write 5m = 1.25× Input
-- Cache write 1h = 2× Input
+- Output = 5x Input
+- Cache read = 0.1x Input
+- Cache write 5m = 1.25x Input
+- Cache write 1h = 2x Input
 
 Se a Anthropic alterar preços, basta ajustar `input_usd_per_m`; os
 demais campos são derivados dessa base.
@@ -48,10 +48,10 @@ def _price_from_input(input_per_m: float) -> Price:
     """Constrói Price aplicando os multiplicadores oficiais Anthropic."""
     return Price(
         input_usd_per_m=input_per_m,
-        output_usd_per_m=input_per_m * 5.0,         # 5× input
-        cache_read_usd_per_m=input_per_m * 0.1,     # 0.1× input
-        cache_write_5m_usd_per_m=input_per_m * 1.25,  # 1.25× input
-        cache_write_1h_usd_per_m=input_per_m * 2.0,   # 2× input
+        output_usd_per_m=input_per_m * 5.0,         # 5x input
+        cache_read_usd_per_m=input_per_m * 0.1,     # 0.1x input
+        cache_write_5m_usd_per_m=input_per_m * 1.25,  # 1.25x input
+        cache_write_1h_usd_per_m=input_per_m * 2.0,   # 2x input
     )
 
 

@@ -21,7 +21,6 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from claude_dash.account import read_account_info
-from claude_dash.rate_limits import global_worst_case, read_all as read_rate_limits
 from claude_dash.aggregator import (
     build_stats_for_transcript,
     collect_live_sessions,
@@ -35,8 +34,9 @@ from claude_dash.discover import (
 )
 from claude_dash.models import SessionStats
 from claude_dash.pricing import cost_of
+from claude_dash.rate_limits import global_worst_case
+from claude_dash.rate_limits import read_all as read_rate_limits
 from claude_dash.views.today import today_start_ms
-
 
 mcp = FastMCP("claude-dashboard")
 
@@ -332,7 +332,12 @@ def session_details(sid: str) -> dict[str, Any]:
     """
     ref = find_transcript_for_session(sid)
     if ref is None:
-        return {"error": f"Nenhum transcript encontrado para sid='{sid}' (prefix ambíguo ou inexistente)"}
+        return {
+            "error": (
+                f"Nenhum transcript encontrado para sid='{sid}'"
+                " (prefix ambíguo ou inexistente)"
+            )
+        }
 
     stats = build_stats_for_transcript(ref)
     stats.subagents = len(subagents_of(ref.session_id))

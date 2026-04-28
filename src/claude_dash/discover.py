@@ -6,7 +6,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-
 CLAUDE_HOME = Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude"))
 SESSIONS_DIR = CLAUDE_HOME / "sessions"
 PROJECTS_DIR = CLAUDE_HOME / "projects"

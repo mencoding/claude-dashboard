@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from claude_dash.models import SessionStats, Usage
+from claude_dash.models import SessionStats
 from claude_dash.views.today import _tools_aggregate
 
 
