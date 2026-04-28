@@ -277,7 +277,9 @@ class DashboardApp(App):
         Binding("s", "audit_drill_down_root", "Root drill-down", show=False),
         Binding("e", "audit_export_prompt", "Export", show=False),
         Binding("h", "audit_toggle_host", "Toggle host", show=False),
-        Binding("c", "audit_compare_prompt", "Compare", show=False),
+        Binding("c", "audit_compare_action", "Compare", show=False),
+        Binding("space", "audit_toggle_mark", "Mark", show=False),
+        Binding("enter", "audit_enter_action", "Drill/Compare", show=False),
         Binding("end", "audit_resume_scroll", "Resume", show=False),
     ]
 
@@ -322,6 +324,16 @@ class DashboardApp(App):
         # ignora um evento e reseta. Qualquer evento subsequente sem
         # flag significa interacao do usuario -> marca pausa.
         self._audit_cursor_managed: bool = False
+        # Segunda linha de defesa pro auto-tail bug: rastreia o cursor_row
+        # que setamos programaticamente. Se no proximo tick o cursor
+        # estiver em posicao diferente sem nossa autorizacao, usuario
+        # moveu — marca interacao deterministicamente (sem depender de
+        # timing do evento RowHighlighted que pode chegar atrasado).
+        self._audit_last_set_cursor: int = -1
+        # Multi-select via Space: tool_use_ids das entries marcadas.
+        # Enter ou tecla `c` agem sobre essas: 2+ -> comparacao,
+        # 0-1 -> drill-down do cursor.
+        self._audit_marked: set[str] = set()
         # Render incremental: tracking pra evitar full rebuild a cada tick.
         # Signature do filtro (filter+window+show_tests): se mudar, rebuild.
         self._audit_table_signature: tuple | None = None
@@ -685,6 +697,11 @@ class DashboardApp(App):
                 status_parts.append("host=todos")
             if self._audit_show_tests:
                 status_parts.append("show-tests=on")
+            # #67-followup: contador de marcadas pra usuario saber
+            # quantas estao no batch da proxima Enter/c.
+            n_marked = len(self._audit_marked)
+            if n_marked > 0:
+                status_parts.append(f"[bold yellow]marked={n_marked}[/]")
             paused = self._is_audit_paused()
             if paused:
                 status_parts.append("[bold yellow]PAUSED — Press End to resume[/]")
@@ -723,8 +740,18 @@ class DashboardApp(App):
         """
         from claude_dash.views.audit import _color_for, _fmt_bytes
 
+        # Detecta movimento de cursor pelo usuario entre ticks
+        # (deterministico, nao depende de timing de evento). Se o cursor
+        # esta diferente do que setamos da ultima vez, usuario moveu.
+        if (
+            dt.row_count > 0
+            and self._audit_last_set_cursor >= 0
+            and dt.cursor_row != self._audit_last_set_cursor
+        ):
+            self._mark_audit_user_action()
+
         if not dt.columns:
-            dt.add_columns("time", "sess", "host", "tool", "dur_ms", "in", "out")
+            dt.add_columns("Mk", "time", "sess", "host", "tool", "dur_ms", "in", "out")
 
         # `visible` ja vem capeado pelo chamador (_refresh_audit) em
         # AUDIT_TABLE_MAX_ROWS. Nao re-slicear pra manter cache alinhado.
@@ -779,7 +806,12 @@ class DashboardApp(App):
                 style = "italic dim"
             dur_str = "running..." if is_running else str(e.duration_ms)
             out_str = "—" if is_running else _fmt_bytes(e.output_bytes)
+            # Multi-select via Space (#67-followup): celula `Mk` mostra ✓
+            # quando entry esta marcada pra comparison batch.
+            mark_key = e.tool_use_id or e.session_id
+            mark_str = "✓" if mark_key in self._audit_marked else " "
             cells = [
+                Text(mark_str, style="bold yellow", justify="center"),
                 Text(time_str, style="cyan" if not (host_other or is_running) else "dim"),
                 Text(sess_str, style=style),
                 Text(host_str, style=style),
@@ -806,6 +838,11 @@ class DashboardApp(App):
         ):
             self._audit_cursor_managed = True
             dt.move_cursor(row=dt.row_count - 1, animate=False)
+        # Atualiza tracker pro proximo tick comparar (#67-followup).
+        # Independente de termos movido, registramos onde o cursor
+        # esta agora — proximo tick deteta diff = movimento do usuario.
+        if dt.row_count > 0:
+            self._audit_last_set_cursor = dt.cursor_row
 
     def _populate_audit_keys(self) -> None:
         """Renderiza linha de atalhos da aba Audit no widget #audit-keys.
@@ -821,9 +858,10 @@ class DashboardApp(App):
             ("t", "window"),
             ("?", "tests"),
             ("h", "host"),
-            ("s", "drill-down"),
-            ("e", "export"),
+            ("Spc", "mark"),
+            ("Enter/s", "drill-down"),
             ("c", "compare"),
+            ("e", "export"),
             ("End", "resume"),
         ]
         parts = "  ".join(
@@ -883,11 +921,25 @@ class DashboardApp(App):
         except Exception:
             pass
 
-    def action_audit_compare_prompt(self) -> None:
-        """Tecla `c`: prompt pra comparar 2-3 sessoes lado-a-lado (#38)."""
+    def action_audit_compare_action(self) -> None:
+        """Tecla `c`: comparar sessoes (#38 + #67-followup).
+
+        Comportamento:
+        - 2+ entries marcadas (Space) -> compara as session_ids unicas.
+        - 0-1 marcadas -> abre prompt manual (comportamento antigo).
+        """
         if not self._audit_active():
             return
         self._mark_audit_user_action()
+
+        marked_sids = self._marked_session_ids()
+        if len(marked_sids) >= 2:
+            # Usa session_ids das marcadas direto, sem prompt.
+            self._handle_audit_compare(" ".join(sorted(marked_sids)))
+            self._clear_marks_and_refresh()
+            return
+
+        # Fallback: prompt manual de SIDs
         try:
             inp = self.query_one("#audit-compare-input", Input)
             inp.value = ""
@@ -895,6 +947,76 @@ class DashboardApp(App):
             inp.focus()
         except Exception:
             pass
+
+    def action_audit_toggle_mark(self) -> None:
+        """Tecla `Space`: toggla marca da entry no cursor (#67-followup).
+
+        Marcadas ficam destacadas com ✓ na coluna Mk. Tecla Enter (ou c)
+        com 2+ marcadas dispara comparison; com 0-1 dispara drill-down.
+        """
+        if not self._audit_active():
+            return
+        self._mark_audit_user_action()
+        try:
+            dt = self.query_one("#audit-table", DataTable)
+        except Exception:
+            return
+        visible = list(getattr(self, "_audit_visible_cache", []))
+        cursor_row = dt.cursor_row
+        if not visible or cursor_row < 0 or cursor_row >= len(visible):
+            return
+        entry = visible[cursor_row]
+        key = entry.tool_use_id or entry.session_id
+        if not key:
+            return
+        if key in self._audit_marked:
+            self._audit_marked.discard(key)
+        else:
+            self._audit_marked.add(key)
+        # Re-render pra atualizar a celula Mk. _audit_table_signature
+        # nao depende de _audit_marked, entao append-only manteria a
+        # tabela velha; forca rebuild zerando a signature.
+        self._audit_table_signature = None
+        self._refresh_audit()
+
+    def action_audit_enter_action(self) -> None:
+        """Tecla `Enter`: drill-down ou comparison conforme marcadas (#67-followup).
+
+        Comportamento:
+        - 2+ entries marcadas -> compara as session_ids.
+        - 0-1 marcadas -> drill-down do cursor (= tecla `s`).
+        """
+        if not self._audit_active():
+            return
+        self._mark_audit_user_action()
+
+        marked_sids = self._marked_session_ids()
+        if len(marked_sids) >= 2:
+            self._handle_audit_compare(" ".join(sorted(marked_sids)))
+            self._clear_marks_and_refresh()
+            return
+
+        # Default: drill-down do cursor (mesmo que `s`)
+        self.action_audit_drill_down_root()
+
+    def _marked_session_ids(self) -> set[str]:
+        """Resolve session_ids unicas a partir do set de tool_use_ids marcados."""
+        if not self._audit_marked:
+            return set()
+        sids: set[str] = set()
+        # Itera pelo buffer atual; marca pode ter sido feita em entry
+        # que ja saiu do ring buffer — nesse caso nao acha e descarta.
+        for entry in self._audit_entries:
+            key = entry.tool_use_id or entry.session_id
+            if key in self._audit_marked and entry.session_id:
+                sids.add(entry.session_id)
+        return sids
+
+    def _clear_marks_and_refresh(self) -> None:
+        """Limpa todas as marcas e forca re-render da tabela."""
+        self._audit_marked.clear()
+        self._audit_table_signature = None
+        self._refresh_audit()
 
     def action_audit_toggle_host(self) -> None:
         """Tecla `h`: toggle entre `host=<atual>` e `host=todos` (#55).

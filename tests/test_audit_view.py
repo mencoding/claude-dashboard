@@ -271,6 +271,58 @@ def test_tecla_question_toggle_test_sessions() -> None:
     _run(run())
 
 
+def test_marked_session_ids_resolve_de_tool_use_ids_no_buffer() -> None:
+    """#67-followup: _marked_session_ids resolve sids unicos do conjunto marcado."""
+    async def run():
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+
+        from claude_dash.audit.models import AuditEntry
+
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+
+            # 3 entries de 2 sessoes diferentes (independente do buffer real)
+            base = _dt(2026, 4, 28, 0, 0, 0, tzinfo=_tz(_td(hours=-3)))
+            sid_a = "0efd3cf4-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            sid_b = "a1b2cccc-cccc-cccc-cccc-cccccccccccc"
+            for i in range(3):
+                app._audit_entries.append(AuditEntry(
+                    timestamp=base + _td(seconds=i),
+                    hostname="host", pid="1",
+                    session_id=sid_a if i < 2 else sid_b,
+                    tool="Bash", tool_use_id=f"synthetic-tu-{i}", status="success",
+                    duration_ms=10, perm_mode="auto", input_sha="0",
+                    input_bytes=10, output_bytes=20,
+                ))
+
+            # Marca tool_use_ids manualmente (simula o que action_audit_toggle_mark
+            # faria via Space) — uma de cada session
+            app._audit_marked.add("synthetic-tu-0")  # sid_a
+            app._audit_marked.add("synthetic-tu-2")  # sid_b
+
+            sids = app._marked_session_ids()
+            assert sid_a in sids
+            assert sid_b in sids
+    _run(run())
+
+
+def test_clear_marks_and_refresh() -> None:
+    """_clear_marks_and_refresh esvazia o set."""
+    async def run():
+        app = DashboardApp()
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            app._audit_marked.add("any-key")
+            app._audit_marked.add("other-key")
+            assert len(app._audit_marked) == 2
+            app._clear_marks_and_refresh()
+            assert len(app._audit_marked) == 0
+    _run(run())
+
+
 def test_cursor_user_pausa_auto_tail() -> None:
     """Movimento de cursor pelo usuario deve pausar o auto-tail.
 
