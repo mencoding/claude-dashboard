@@ -66,6 +66,21 @@ from claude_dash.views.audit import (
 from claude_dash.views.audit import (
     render_footer as _audit_render_footer,
 )
+from claude_dash.views.audit_compare import (
+    find_correlations as _compare_find_correlations,
+)
+from claude_dash.views.audit_compare import (
+    group_by_session as _compare_group_by_session,
+)
+from claude_dash.views.audit_compare import (
+    parse_compare_input as _compare_parse_input,
+)
+from claude_dash.views.audit_compare import (
+    render_comparison as _compare_render,
+)
+from claude_dash.views.audit_compare import (
+    render_correlations_summary as _compare_render_summary,
+)
 from claude_dash.views.now import (
     _header as _now_header,
 )
@@ -221,6 +236,15 @@ class DashboardApp(App):
     #audit-export-input.active {
         display: block;
     }
+    #audit-compare-input {
+        dock: bottom;
+        height: 3;
+        display: none;
+        border: solid $accent;
+    }
+    #audit-compare-input.active {
+        display: block;
+    }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -249,6 +273,7 @@ class DashboardApp(App):
         Binding("s", "audit_drill_down_root", "Root drill-down", show=False),
         Binding("e", "audit_export_prompt", "Export", show=False),
         Binding("h", "audit_toggle_host", "Toggle host", show=False),
+        Binding("c", "audit_compare_prompt", "Compare", show=False),
         Binding("end", "audit_resume_scroll", "Resume", show=False),
     ]
 
@@ -336,6 +361,13 @@ class DashboardApp(App):
                         "export: caminho .csv ou .json (vazio = default em ~) | Esc cancela"
                     ),
                     id="audit-export-input",
+                )
+                yield Input(
+                    placeholder=(
+                        "compare: 2-3 prefixos de SID separados por espaço "
+                        "(ex.: '0efd3 a1b2 8f9c') | Esc cancela"
+                    ),
+                    id="audit-compare-input",
                 )
         yield Footer()
 
@@ -787,6 +819,7 @@ class DashboardApp(App):
             ("h", "host"),
             ("s", "drill-down"),
             ("e", "export"),
+            ("c", "compare"),
             ("End", "resume"),
         ]
         parts = "  ".join(
@@ -840,6 +873,19 @@ class DashboardApp(App):
         self._mark_audit_user_action()
         try:
             inp = self.query_one("#audit-filter-input", Input)
+            inp.value = ""
+            inp.add_class("active")
+            inp.focus()
+        except Exception:
+            pass
+
+    def action_audit_compare_prompt(self) -> None:
+        """Tecla `c`: prompt pra comparar 2-3 sessoes lado-a-lado (#38)."""
+        if not self._audit_active():
+            return
+        self._mark_audit_user_action()
+        try:
+            inp = self.query_one("#audit-compare-input", Input)
             inp.value = ""
             inp.add_class("active")
             inp.focus()
@@ -1048,6 +1094,52 @@ class DashboardApp(App):
             with contextlib.suppress(Exception):
                 self.query_one("#audit-table", Static).focus()
             return
+        if event.input.id == "audit-compare-input":
+            self._handle_audit_compare(event.value.strip())
+            event.input.remove_class("active")
+            event.input.value = ""
+            with contextlib.suppress(Exception):
+                self.query_one("#audit-table", Static).focus()
+            return
+
+    def _handle_audit_compare(self, raw: str) -> None:
+        """Processa prompt de comparacao: parsea SIDs e renderiza colunas (#38)."""
+        sids = _compare_parse_input(raw)
+        if len(sids) < 2:
+            self._update_audit_detail(Text(
+                "Compare exige ao menos 2 prefixos de SID (max 3 recomendado).",
+                style="yellow",
+            ))
+            return
+        if len(sids) > 4:
+            self._update_audit_detail(Text(
+                "Compare aceita ate 4 sessoes — prompt teve mais; truncando.",
+                style="yellow",
+            ))
+            sids = sids[:4]
+
+        all_entries = list(self._audit_entries)
+        all_entries = _audit_correlate(all_entries)
+        # Aplica janela temporal corrente (do toggle `t`); host filter NAO
+        # — comparar cross-device pode ser util.
+        all_entries = _audit_filter_entries(
+            all_entries,
+            window_hours=self._audit_window_hours,
+            show_test_sessions=self._audit_show_tests,
+        )
+
+        grouped = _compare_group_by_session(all_entries, sids)
+        if all(len(v) == 0 for v in grouped.values()):
+            self._update_audit_detail(Text(
+                f"Nenhuma entry casou com os prefixos {sids} na janela atual.",
+                style="yellow",
+            ))
+            return
+
+        correlations = _compare_find_correlations(grouped)
+        comparison = _compare_render(grouped, correlations)
+        summary = _compare_render_summary(correlations)
+        self._update_audit_detail(Group(comparison, summary))
 
     def _handle_audit_export(self, raw_path: str) -> None:
         """Resolve path + formato, exporta conjunto filtrado atual.
@@ -1098,6 +1190,15 @@ class DashboardApp(App):
                 pass
             try:
                 inp = self.query_one("#audit-export-input", Input)
+                if inp.has_class("active"):
+                    inp.remove_class("active")
+                    inp.value = ""
+                    event.stop()
+                    return
+            except Exception:
+                pass
+            try:
+                inp = self.query_one("#audit-compare-input", Input)
                 if inp.has_class("active"):
                     inp.remove_class("active")
                     inp.value = ""
