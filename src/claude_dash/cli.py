@@ -9,11 +9,18 @@ from __future__ import annotations
 import argparse
 import sys
 
+from claude_dash import __version__
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="claude-dash",
         description="Dashboard de uso do Claude Code. Sem args = TUI interativa.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     # subcomando é opcional: sem argumento → TUI
     subparsers = parser.add_subparsers(dest="command", required=False)
