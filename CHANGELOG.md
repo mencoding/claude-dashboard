@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-04-28
+
+### Changed
+- **Audit log group migrated from `adm` to dedicated `claude-audit`.** `/var/log/claude/tools.log` is now `syslog:claude-audit 0640` instead of `syslog:adm 0640`. Templates `rsyslog-30-claude-audit.conf` (`fileGroup="claude-audit"`) and `logrotate-system-claude-audit` (`create 0640 syslog claude-audit`) updated accordingly. Closes #52.
+
+### Added
+- `claude-dash setup-audit` root script now creates the `claude-audit` group via `groupadd -f` (idempotent), adds the invoking user (`SUDO_USER`) via `usermod -aG`, and `chown`s `/var/log/claude/` plus existing rotated `.gz` files to `syslog:claude-audit`. Migration is automatic on re-run.
+- State detector reports three new lines in `_print_state`: `grupo claude-audit`, `user no grupo`, `tools.log no grupo` — useful to verify migration completion at a glance.
+- `claude_dash.audit.setup.CLAUDE_AUDIT_GROUP` exported as `"claude-audit"` constant; helpers `_claude_audit_group_exists()`, `_user_in_claude_audit_group()`, `_var_log_owned_by_claude_audit()` for state detection (testable).
+
+### Migration
+
+Re-run `claude-dash setup-audit` after upgrade:
+
+```bash
+claude-dash setup-audit
+sudo bash /tmp/claude-audit-root-setup.sh
+# Re-login (or `newgrp claude-audit` in a fresh shell) for group membership to take effect.
+```
+
+The script is idempotent — running it twice produces the same state. Existing v0.14.x installs that were on the `adm` group continue working until the script is re-run, but the TUI drill-down (`s` key) will fail with a permission error until the user is in `claude-audit`.
+
+### Cross-distro
+
+`adm` is a Debian-family convention; Fedora/Arch may lack it or use it differently. `claude-audit` is portable across distros via `groupadd`/`usermod` (shadow-utils, ubiquitous on mainstream Linux). Validated on Debian-family; not yet validated on RHEL/Fedora/Arch — please report if you run setup-audit on a non-Debian distro.
+
+### Reasoning
+
+- **Least privilege**: membership in `claude-audit` grants access only to Claude audit logs, not all of `/var/log/`.
+- **Auditability**: `getent group claude-audit` lists exactly who has visibility.
+- **Revocability**: removing a user from `claude-audit` revokes audit-only access without affecting other system roles.
+
 ## [0.14.7] - 2026-04-28
 
 ### Added

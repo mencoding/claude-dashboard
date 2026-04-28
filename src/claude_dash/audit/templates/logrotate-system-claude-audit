@@ -7,7 +7,7 @@
     notifempty
     dateext
     dateformat -%Y-W%V
-    create 0640 syslog adm
+    create 0640 syslog claude-audit
     postrotate
         /usr/lib/rsyslog/rsyslog-rotate 2>/dev/null || systemctl kill -s HUP rsyslog
     endscript
