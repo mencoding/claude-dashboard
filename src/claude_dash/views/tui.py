@@ -11,6 +11,7 @@ import subprocess
 import time
 from collections import deque
 from pathlib import Path
+from typing import ClassVar
 
 from rich.console import Group
 from rich.panel import Panel
@@ -197,7 +198,7 @@ class DashboardApp(App):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("1", "show_tab('tab-now')", "Now"),
         Binding("2", "show_tab('tab-today')", "Today"),
         Binding("3", "show_tab('tab-tools')", "Tools"),
