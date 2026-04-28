@@ -196,15 +196,19 @@ class DashboardApp(App):
         margin: 0 0 1 0;
     }
     /* Aba Audit: tabela em cima, detail painel embaixo, status 1 linha,
-       prompt de filtro docked-bottom (so visivel quando ativo). */
+       prompt de filtro docked-bottom (so visivel quando ativo).
+       Split ~50/50 entre tabela e detail (era 70/30) — drill-down e
+       comparison precisam de espaco. overflow-y:scroll forca a barra
+       de rolagem aparecer mesmo quando o conteudo cabe (UX previsivel). */
     #audit-table {
         border: solid $primary;
-        height: 70%;
+        height: 50%;
     }
     #audit-detail {
         height: 1fr;
         border: solid $primary;
-        overflow-y: auto;
+        overflow-y: scroll;
+        scrollbar-gutter: stable;
     }
     #audit-status {
         height: 1;
@@ -1027,19 +1031,21 @@ class DashboardApp(App):
         truncated = len(matching) > max_lines
         shown = matching[-max_lines:]
         # Header informa qual chave foi usada e o contexto da entry.
+        from claude_dash.views.audit import render_drill_down_human
+
         ts = entry.timestamp.strftime("%H:%M:%S")
-        header = (
+        header_markup = (
             f"[bold]{ts} {entry.tool}[/bold]  "
             f"[dim]session={entry.session_id[:8]}…[/dim]\n"
             f"[bold]grep {filter_key} {AUDIT_SYSTEM_LOG}[/bold]  "
-            f"({len(matching)} linhas"
-            f"{', ultimas ' + str(max_lines) if truncated else ''})\n\n"
+            f"({len(matching)} linha(s)"
+            f"{', mostrando ultimas ' + str(max_lines) if truncated else ''})\n"
         )
-        # Text.from_markup interpretaria colchetes do log como markup;
-        # constrói Text manual: header em markup, body como texto plano.
-        text_obj = Text.from_markup(header)
-        text_obj.append("".join(shown))
-        self._update_audit_detail(text_obj)
+        # Renderiza cada linha como Panel humano-legivel (#67-followup).
+        # Antes mostravamos texto bruto RFC 5424; agora cada campo do log
+        # vem identificado por label.
+        panels = [render_drill_down_human(line) for line in shown]
+        self._update_audit_detail(Group(Text.from_markup(header_markup), *panels))
 
     def _update_audit_detail(self, content) -> None:
         with contextlib.suppress(Exception):

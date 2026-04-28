@@ -1,7 +1,7 @@
 """Testes do parser de linhas RFC 5424 do audit log."""
 from __future__ import annotations
 
-from claude_dash.audit.parser import parse_line
+from claude_dash.audit.parser import parse_full_line, parse_line
 
 
 def test_linha_valida_basica() -> None:
@@ -133,3 +133,64 @@ def test_toolcall_com_event_explicito_end() -> None:
     e = parse_line(line)
     assert e is not None
     assert e.event == "end"
+
+
+# ---- parse_full_line: extrai trailing fields (#67-followup) ---------
+
+
+def test_full_line_extrai_cwd_e_cmd_de_bash() -> None:
+    """Linha do tools.log inclui cwd + cmd no trailing apos o ']'."""
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="success" '
+        'duration_ms="100" perm_mode="auto" input_sha="0" input_bytes="0" '
+        "output_bytes=\"0\"] cwd='/home/menzani' cmd='ls -la /tmp'"
+    )
+    entry, extra = parse_full_line(line)
+    assert entry is not None
+    assert entry.tool == "Bash"
+    assert extra["cwd"] == "/home/menzani"
+    assert extra["cmd"] == "ls -la /tmp"
+
+
+def test_full_line_extrai_path_de_read() -> None:
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Read" tool_use_id="x" status="success" '
+        'duration_ms="100" perm_mode="auto" input_sha="0" input_bytes="0" '
+        "output_bytes=\"0\"] cwd='/tmp' path='/etc/hostname'"
+    )
+    entry, extra = parse_full_line(line)
+    assert entry is not None
+    assert extra["path"] == "/etc/hostname"
+
+
+def test_full_line_extrai_url_de_webfetch() -> None:
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="WebFetch" tool_use_id="x" status="success" '
+        'duration_ms="100" perm_mode="auto" input_sha="0" input_bytes="0" '
+        "output_bytes=\"0\"] cwd='/tmp' url='https://example.com/'"
+    )
+    entry, extra = parse_full_line(line)
+    assert entry is not None
+    assert extra["url"] == "https://example.com/"
+
+
+def test_full_line_sem_trailing_retorna_extra_vazio() -> None:
+    """Linha so com SD, sem campos depois — extra vazio mas entry valido."""
+    line = (
+        '<134>1 2026-04-28T00:00:29.223-03:00 host claude-code 1 TOOLCALL '
+        '[audit@iris session="abc" tool="Bash" tool_use_id="x" status="success" '
+        'duration_ms="100" perm_mode="auto" input_sha="0" input_bytes="0" '
+        'output_bytes="0"]'
+    )
+    entry, extra = parse_full_line(line)
+    assert entry is not None
+    assert extra == {}
+
+
+def test_full_line_invalida_retorna_none_e_dict_vazio() -> None:
+    entry, extra = parse_full_line("lixo nao parseavel")
+    assert entry is None
+    assert extra == {}
