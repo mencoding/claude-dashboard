@@ -119,6 +119,10 @@ class SessionStats:
     alive: bool = False
     version: str = ""
     transcript_path: Path | None = None
+    # Nome dado à sessão via slash command `/rename` no harness do Claude
+    # Code (ex: "claude-dash", "auto-normas+20260423"). None quando o
+    # usuário não definiu — não há fallback (não usar cwd nem session_id).
+    session_name: str | None = None
     usage_by_model: dict[str, Usage] = field(default_factory=dict)
     tools: dict[str, int] = field(default_factory=dict)
     messages_user: int = 0

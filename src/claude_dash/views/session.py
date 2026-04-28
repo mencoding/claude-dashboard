@@ -58,7 +58,11 @@ def _header(stats: SessionStats) -> Panel:
     )
 
     h = Text()
-    h.append(f" SID    {stats.session_id}\n", style="bold cyan")
+    if stats.session_name:
+        h.append(f" Nome   {stats.session_name}\n", style="bold cyan")
+        h.append(f" SID    {stats.session_id}\n", style="dim cyan")
+    else:
+        h.append(f" SID    {stats.session_id}\n", style="bold cyan")
     h.append(f" CWD    {stats.cwd}\n", style="dim")
     h.append(" Estado ", style="dim")
     h.append(f"{state}", style="")

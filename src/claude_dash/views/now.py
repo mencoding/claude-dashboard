@@ -68,6 +68,19 @@ def _short_sid(sid: str) -> str:
     return sid[:8] + "…"
 
 
+def _session_label(s: SessionStats) -> str:
+    """Label primário da sessão para tabelas: nome (/rename) se existe, senão SID curto.
+
+    Quando há nome, exibe-o em destaque com o SID curto numa segunda
+    linha em estilo dim — mantém ambos os identificadores acessíveis
+    sem competir pela atenção visual.
+    """
+    short = _short_sid(s.session_id)
+    if s.session_name:
+        return f"[bold]{s.session_name}[/bold]\n[dim]{short}[/dim]"
+    return short
+
+
 def _total_cost(s: SessionStats) -> float:
     return sum(cost_of(model, u) for model, u in s.usage_by_model.items())
 
@@ -143,7 +156,7 @@ def _session_table(sessions: list[SessionStats]) -> Table:
         padding=(0, 1),
     )
     table.add_column("PID", style="dim", justify="right", width=6)
-    table.add_column("SID", width=10)
+    table.add_column("Sessão", width=20, overflow="fold")
     table.add_column("CWD", overflow="ellipsis")
     table.add_column("Idade", justify="right", width=8)
     table.add_column("Modelo", width=14)
@@ -170,7 +183,7 @@ def _session_table(sessions: list[SessionStats]) -> Table:
 
         table.add_row(
             f"{status}{pid_txt}",
-            _short_sid(s.session_id),
+            _session_label(s),
             _fmt_short_cwd(s.cwd),
             _fmt_duration(age_ms) if age_ms else "—",
             dom_short,

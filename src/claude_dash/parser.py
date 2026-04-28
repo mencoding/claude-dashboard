@@ -96,6 +96,26 @@ def iter_tool_uses(entry: dict[str, Any]) -> Iterator[str]:
                 yield name
 
 
+def extract_custom_title(entry: dict[str, Any]) -> str | None:
+    """Retorna o nome dado à sessão via `/rename`, se a entry for do tipo
+    `custom-title`.
+
+    O harness do Claude Code persiste o nome no transcript JSONL como
+    uma linha do tipo `{"type":"custom-title","customTitle":"<nome>",...}`.
+    Cada `/rename` aplicado durante a sessão gera uma nova entry — a
+    convenção do aggregator é "última vence" (a mais recente sobrescreve).
+
+    Strings vazias são descartadas (retornam None) para não poluir o
+    payload com nomes nulos.
+    """
+    if entry.get("type") != "custom-title":
+        return None
+    title = entry.get("customTitle")
+    if isinstance(title, str) and title.strip():
+        return title
+    return None
+
+
 def extract_timestamp_ms(entry: dict[str, Any]) -> int | None:
     """Converte `timestamp` ISO8601 para epoch ms, se presente."""
     ts = entry.get("timestamp")

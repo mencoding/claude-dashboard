@@ -51,6 +51,7 @@ def _stats_to_dict(s: SessionStats, *, include_tools_top: int = 5) -> dict[str, 
     top_tools = sorted(s.tools.items(), key=lambda kv: -kv[1])[:include_tools_top]
     return {
         "session_id": s.session_id,
+        "session_name": s.session_name,
         "pid": s.pid,
         "alive": s.alive,
         "cwd": str(s.cwd),
@@ -90,13 +91,21 @@ def _infer_alerts(
     now_ms = int(datetime.now().timestamp() * 1000)
     alerts: list[str] = []
 
+    def _label(s: SessionStats) -> str:
+        # Prefere nome humano (/rename) ao prefixo do UUID para alertas.
+        # Mantém o prefixo entre parênteses para desambiguação se houver
+        # várias sessões com o mesmo nome.
+        if s.session_name:
+            return f"'{s.session_name}' ({s.session_id[:8]}…)"
+        return f"{s.session_id[:8]}…"
+
     for s in live_stats:
         # Output médio por turno muito alto — proxy de "Opus gerando respostas
         # densas" (ex: arquivos longos, loops, output repetitivo). O threshold
         # é em tokens de OUTPUT por turno (não custo direto).
         if s.tokens_per_turn > 300_000 and s.messages_assistant > 3:
             alerts.append(
-                f"Sessão {s.session_id[:8]}… com média {int(s.tokens_per_turn):,} "
+                f"Sessão {_label(s)} com média {int(s.tokens_per_turn):,} "
                 f"output tokens/turno (esperado < 300k): investigar se está "
                 f"gerando arquivos longos ou rodando em loop."
             )
@@ -105,7 +114,7 @@ def _infer_alerts(
         if s.last_activity_ms and (now_ms - s.last_activity_ms) > 30 * 60 * 1000:
             minutes = (now_ms - s.last_activity_ms) // 60_000
             alerts.append(
-                f"Sessão {s.session_id[:8]}… (pid {s.pid}) viva mas sem "
+                f"Sessão {_label(s)} (pid {s.pid}) viva mas sem "
                 f"atividade há {minutes} min — pode estar travada, aguardando "
                 f"input do usuário, ou idle."
             )
@@ -114,7 +123,7 @@ def _infer_alerts(
         ctx = s.active_context_tokens
         if ctx > 150_000:
             alerts.append(
-                f"Sessão {s.session_id[:8]}… usando {ctx:,} tokens de contexto ativo "
+                f"Sessão {_label(s)} usando {ctx:,} tokens de contexto ativo "
                 f"— próximo do limite 200k da janela padrão; considerar /compact."
             )
 
@@ -443,6 +452,7 @@ def workflow_snapshot() -> dict[str, Any]:
             "sessions_brief": [
                 {
                     "sid_short": s.session_id[:8],
+                    "session_name": s.session_name,
                     "pid": s.pid,
                     "model": s.dominant_model,
                     "cost_usd": round(sum(cost_of(m, u) for m, u in s.usage_by_model.items()), 2),

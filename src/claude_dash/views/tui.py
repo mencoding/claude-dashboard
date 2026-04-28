@@ -251,15 +251,22 @@ class DashboardApp(App):
         # são convencionalmente radio buttons — usuário interpretava
         # "● = item selecionado" em vez de "sessão ativa". O highlight
         # de seleção já é fornecido pelo ListView do Textual.
-        for ls in discover_live_sessions():
-            if ls.session_id in seen:
+        # Usa `collect_live_sessions` em vez de `discover_live_sessions`
+        # para ter `session_name` disponível (vem do aggregator, não do
+        # arquivo de session metadata).
+        live_stats = collect_live_sessions()
+        for s in live_stats:
+            if s.session_id in seen:
                 continue
-            seen.add(ls.session_id)
+            seen.add(s.session_id)
+            name_part = (
+                f"[bold]{s.session_name}[/bold]  " if s.session_name else ""
+            )
             label = (
                 f"[bold green]viva[/bold green]  "
-                f"{ls.session_id[:8]}…  {ls.cwd}  pid={ls.pid}"
+                f"{name_part}{s.session_id[:8]}…  {s.cwd}  pid={s.pid}"
             )
-            entries.append((ls.session_id, label))
+            entries.append((s.session_id, label))
 
         # Sessões do dia (mesmo que mortas)
         for s in collect_sessions_since(today_start_ms()):
@@ -270,7 +277,10 @@ class DashboardApp(App):
                 state_markup = "[bold green]viva [/bold green]"
             else:
                 state_markup = "[bold red]morta[/bold red]"
-            label = f"{state_markup}  {s.session_id[:8]}…  {s.cwd}"
+            name_part = (
+                f"[bold]{s.session_name}[/bold]  " if s.session_name else ""
+            )
+            label = f"{state_markup}  {name_part}{s.session_id[:8]}…  {s.cwd}"
             entries.append((s.session_id, label))
 
         if not entries:

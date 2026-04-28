@@ -12,6 +12,7 @@ from claude_dash.discover import (
 )
 from claude_dash.models import SessionStats, ToolUsageStats, Turn, Usage
 from claude_dash.parser import (
+    extract_custom_title,
     extract_model,
     extract_timestamp_ms,
     extract_usage,
@@ -28,6 +29,12 @@ def _apply_entry(entry: dict, stats: SessionStats) -> None:
         stats.messages_user += 1
     elif etype == "assistant":
         stats.messages_assistant += 1
+    elif etype == "custom-title":
+        # /rename do harness — última entry vence (sobrescreve)
+        title = extract_custom_title(entry)
+        if title is not None:
+            stats.session_name = title
+        return  # custom-title não tem usage/tools/timestamp
 
     u = extract_usage(entry)
     if u is not None:
@@ -158,6 +165,11 @@ def aggregate_transcript_since(
             stats.started_at_ms = live.started_at_ms
 
     for _offset, entry in iter_entries(ref.path):
+        # custom-title não tem timestamp — sempre processa para preservar
+        # o nome dado via /rename mesmo em janelas curtas (ex: today)
+        if entry.get("type") == "custom-title":
+            _apply_entry(entry, stats)
+            continue
         ts = extract_timestamp_ms(entry)
         # Descarta entries sem timestamp OU antes da janela
         if ts is None or ts < since_ms:

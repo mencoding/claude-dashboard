@@ -23,7 +23,7 @@ from claude_dash.views.now import (
     _fmt_duration,
     _fmt_short_cwd,
     _fmt_tokens,
-    _short_sid,
+    _session_label,
     _tools_summary,
     _total_cost,
     colored_cost,
@@ -76,7 +76,7 @@ def _session_table(sessions: list[SessionStats]) -> Panel:
         expand=True,
         padding=(0, 1),
     )
-    table.add_column("SID", width=10)
+    table.add_column("Sessão", width=20, overflow="fold")
     table.add_column("CWD", overflow="ellipsis")
     table.add_column("Estado", width=7, justify="center")
     table.add_column("Última atividade", width=18)
@@ -104,7 +104,7 @@ def _session_table(sessions: list[SessionStats]) -> Panel:
         msgs = f"{s.messages_user}u/{s.messages_assistant}a"
 
         table.add_row(
-            _short_sid(s.session_id),
+            _session_label(s),
             _fmt_short_cwd(s.cwd),
             state,
             last_activity,

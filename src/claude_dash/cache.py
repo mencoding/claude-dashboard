@@ -21,6 +21,13 @@ from claude_dash.models import SessionStats, Usage
 
 CACHE_DIR = Path(os.environ.get("CLAUDE_DASH_CACHE", Path.home() / ".cache" / "claude-dash"))
 
+# Schema do payload do cache. Bumpar quando novos campos do SessionStats
+# precisarem ser populados a partir do JSONL — caches anteriores não têm
+# o campo e seriam servidos como `None` indistinguível de "ausente real".
+# Histórico:
+#   1 → adição de session_name (lido de entries `custom-title`)
+CACHE_SCHEMA_VERSION = 1
+
 
 def cache_path_for(session_id: str, cache_dir: Path = CACHE_DIR) -> Path:
     """Caminho canônico do cache de uma sessão."""
@@ -28,14 +35,25 @@ def cache_path_for(session_id: str, cache_dir: Path = CACHE_DIR) -> Path:
 
 
 def load(session_id: str, cache_dir: Path = CACHE_DIR) -> dict | None:
-    """Carrega o cache; retorna None se ausente ou corrompido."""
+    """Carrega o cache; retorna None se ausente, corrompido ou de schema antigo.
+
+    Caches escritos antes da introdução de `schema_version` (ou com
+    versão menor que `CACHE_SCHEMA_VERSION`) são tratados como ausentes.
+    Isto força reprocessamento do transcript inteiro — necessário para
+    popular campos novos como `session_name` que vêm de entries já
+    parseadas.
+    """
     path = cache_path_for(session_id, cache_dir)
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text())
+        payload = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    # Schema antigo (sem `schema_version` ou versão < atual) → invalida
+    if int(payload.get("schema_version") or 0) < CACHE_SCHEMA_VERSION:
+        return None
+    return payload
 
 
 def save(
@@ -50,6 +68,7 @@ def save(
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_path_for(session_id, cache_dir)
     payload = {
+        "schema_version": CACHE_SCHEMA_VERSION,
         "inode": int(inode),
         "mtime_ms": mtime_ms,
         "byte_offset": byte_offset,
@@ -95,6 +114,7 @@ def deserialize_stats(d: dict) -> SessionStats:
         messages_assistant=int(d.get("messages_assistant") or 0),
         subagents=int(d.get("subagents") or 0),
         last_usage=last_usage,
+        session_name=d.get("session_name") or None,
     )
 
 
