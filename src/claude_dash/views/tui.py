@@ -1060,17 +1060,41 @@ class DashboardApp(App):
         """Tecla `Enter`: drill-down ou comparison conforme marcadas (#67-followup).
 
         Comportamento:
-        - 2+ entries marcadas -> compara as session_ids.
-        - 0-1 marcadas -> drill-down do cursor (= tecla `s`).
+        - 2+ marcadas em 2+ sessoes distintas -> comparison
+        - 2+ marcadas mas todas da mesma sessao -> feedback claro
+        - 0-1 marcadas -> drill-down do cursor (= tecla `s`)
+        - 1+ marcadas mas sem casar com buffer -> drill-down (silenciosa)
         """
         if not self._audit_active():
             return
         self._mark_audit_user_action()
 
+        n_marked = len(self._audit_marked)
         marked_sids = self._marked_session_ids()
-        if len(marked_sids) >= 2:
+
+        if n_marked >= 2 and len(marked_sids) >= 2:
+            # Caminho normal: comparison entre sessoes distintas
             self._handle_audit_compare(" ".join(sorted(marked_sids)))
             self._clear_marks_and_refresh()
+            return
+
+        if n_marked >= 2 and len(marked_sids) < 2:
+            # User marcou 2+ entries mas o resultado nao da pra comparar.
+            # Distingue 2 casos pra feedback util.
+            if len(marked_sids) == 0:
+                msg = (
+                    f"{n_marked} entries marcadas, mas nenhuma encontrada "
+                    "no buffer atual (podem ter rotacionado). Marque "
+                    "(Space) entries visiveis e tente Enter de novo."
+                )
+            else:
+                sid_short = next(iter(marked_sids))[:8]
+                msg = (
+                    f"{n_marked} entries marcadas, mas todas da mesma "
+                    f"sessao ({sid_short}…). Comparison exige 2+ sessoes "
+                    "DISTINTAS. Marque entries de sessoes diferentes."
+                )
+            self._update_audit_detail(Text(msg, style="yellow"))
             return
 
         # Default: drill-down do cursor (mesmo que `s`)
