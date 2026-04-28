@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI: `Audit` tab now emits push notifications when a new entry with `status="error"` arrives via the incremental tail. Configured via env var `CLAUDE_DASH_AUDIT_ALERT_LEVEL ∈ {none, toast, sound, both}` — default `none` preserves the previous quiet behavior. `toast` shows an in-app Textual notification; `sound` calls `notify-send` (libnotify, also adds the system "ding"); `both` does both. Anti-flood: same `tool_use_id` (or `session_id` fallback for legacy entries without `tool_use_id`) is deduplicated within a 60s window. `notify-send` absent from `$PATH` is silent — graceful degradation. Alerts fire even when the active tab isn't `Audit`. Closes #37.
 - New module `claude_dash.audit.alerts` with pure-function `resolve_alert_level()` and `ErrorAlertEmitter` class. Testable in isolation with injectable `clock`, `textual_notify`, and `libnotify` callables.
 
+### Fixed
+- TUI: `Audit` tab cursor was still snapping back to the latest row at every refresh after the user moved it with ↑/↓. Root cause: arrow keys are consumed by the focused `DataTable` and stopped before bubbling to `App.on_key`, so the previous fix (which relied on `_audit_last_user_action` being set in `on_key`) never triggered for cursor navigation. Now uses `on_data_table_row_highlighted` to detect cursor changes regardless of source, with an internal `_audit_cursor_managed` flag to ignore programmatic moves from auto-tail. Regression test added in `tests/test_audit_view.py::test_cursor_user_pausa_auto_tail`.
+
 ## [0.14.6] - 2026-04-28
 
 ### Added

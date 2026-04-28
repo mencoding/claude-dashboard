@@ -283,6 +283,13 @@ class DashboardApp(App):
         # Cache da lista filtrada visivel: drill-down `s` mapea
         # cursor_row -> entry. Atualizado a cada _refresh_audit.
         self._audit_visible_cache: list = []
+        # Flag pra distinguir movimento programatico de cursor (auto-tail
+        # do _populate_audit_table) de movimento do usuario (↑/↓ no
+        # DataTable). Evento RowHighlighted dispara em ambos os casos —
+        # antes de chamar move_cursor, setamos a flag; o handler da
+        # ignora um evento e reseta. Qualquer evento subsequente sem
+        # flag significa interacao do usuario -> marca pausa.
+        self._audit_cursor_managed: bool = False
         # Render incremental: tracking pra evitar full rebuild a cada tick.
         # Signature do filtro (filter+window+show_tests): se mudar, rebuild.
         self._audit_table_signature: tuple | None = None
@@ -737,15 +744,17 @@ class DashboardApp(App):
         self._audit_first_visible_key = first_key
 
         # Cursor: so move pro fim se usuario estava no fim (auto-tail) E
-        # nao houve interacao recente (respeita pausa do D8). Sem o check
-        # de pausa, mover o cursor de volta pra penultima linha era
-        # imediatamente desfeito no proximo tick (1s) — barra visual
-        # "voltava sozinha" pro fim.
+        # nao houve interacao recente (respeita pausa do D8). Marca a
+        # flag _audit_cursor_managed antes pra que o handler de
+        # RowHighlighted ignore este evento — de outro modo, nosso
+        # proprio movimento programatico seria interpretado como
+        # interacao do usuario e re-pausaria a aba indefinidamente.
         if (
             dt.row_count > 0
             and was_at_end
             and not self._is_audit_paused()
         ):
+            self._audit_cursor_managed = True
             dt.move_cursor(row=dt.row_count - 1, animate=False)
 
     def _populate_audit_keys(self) -> None:
@@ -980,6 +989,31 @@ class DashboardApp(App):
         # Usuário pressionou Enter (ou clicou) numa linha da lista
         if isinstance(event.item, SessionListItem):
             self._render_session_detail(event.item.sid)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Detecta movimento de cursor pelo usuario na tabela de Audit.
+
+        Evento dispara em qualquer mudanca de cursor — programatica ou
+        via teclado/mouse. Usamos a flag _audit_cursor_managed pra
+        ignorar nossos proprios movimentos (auto-tail). Qualquer evento
+        sem flag = usuario mexeu, marca pausa pro auto-tail respeitar.
+
+        Necessario porque setas em DataTable nao bubbla pra App.on_key
+        (Textual chama event.stop() apos cursor_up/down) — sem este
+        handler, _audit_last_user_action ficava em 0 e a pausa nunca
+        ativava pra ↑/↓.
+        """
+        if not self._audit_active():
+            return
+        try:
+            if event.data_table.id != "audit-table":
+                return
+        except Exception:
+            return
+        if self._audit_cursor_managed:
+            self._audit_cursor_managed = False
+            return
+        self._mark_audit_user_action()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Prompts da aba Audit: filter aplica filtro; export grava arquivo."""
