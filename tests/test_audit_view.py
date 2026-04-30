@@ -347,9 +347,23 @@ def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
             app._audit_marked.add("synthetic-tu-2")
             assert len(app._marked_session_ids()) == 2
 
+            # Pre-condicoes explicitas pro RowSelected disparar: foco na
+            # DataTable e cursor numa row valida. Em CI headless o
+            # call_after_refresh(_focus_audit_table) agendado em
+            # on_tabbed_content_tab_activated pode nao completar dentro do
+            # pause(0.3) inicial — Enter cai em outro widget e o evento
+            # nunca dispara. Setar explicito aqui torna o teste
+            # deterministico em qualquer ambiente.
+            from textual.widgets import DataTable
+            dt = app.query_one("#audit-table", DataTable)
+            dt.focus()
+            if dt.row_count > 0:
+                dt.move_cursor(row=0, animate=False)
+            await pilot.pause(0.2)
+
             # Pressiona Enter — deve disparar compare via event handler
             await pilot.press("enter")
-            await pilot.pause(0.2)
+            await pilot.pause(0.3)
 
             # Marcas limpas confirmam que compare path executou
             assert len(app._audit_marked) == 0
