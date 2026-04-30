@@ -218,7 +218,7 @@ def _detect_state() -> State:
     s.rsyslog_conf_exists = RSYSLOG_CONF.is_file()
     s.logrotate_sys_exists = LOGROTATE_SYS_CONF.is_file()
     s.var_log_dir_exists = VAR_LOG_DIR.is_dir()
-    s.var_log_file_exists = VAR_LOG_FILE.is_file()
+    s.var_log_file_exists = _safe_is_file(VAR_LOG_FILE)
 
     # #52: estado do grupo claude-audit
     s.claude_audit_group_exists = _claude_audit_group_exists()
@@ -257,18 +257,38 @@ def _user_in_claude_audit_group() -> bool:
         return False
 
 
+def _safe_is_file(path: Path) -> bool:
+    """is_file() tolerante a PermissionError no diretorio pai.
+
+    Necessario porque setup-audit roda *justamente* na transicao em que
+    o usuario foi adicionado ao grupo `claude-audit` mas a sessao ainda
+    nao carregou o grupo (usermod -aG so afeta novas sessoes). Sem isso,
+    stat() em /var/log/claude/tools.log falha com EACCES (parent dir
+    tem o-x=---) e o detector de estado crasha — deadlock: a ferramenta
+    que diagnosticaria o problema nao roda porque o problema existe.
+    Trata permission denied como "estado desconhecido = False": no pior
+    caso, setup-audit re-executa acoes idempotentes.
+    """
+    try:
+        return path.is_file()
+    except PermissionError:
+        return False
+
+
 def _var_log_owned_by_claude_audit() -> bool:
     """True se /var/log/claude/tools.log tem grupo `claude-audit`.
 
     Permite distinguir cenario "post-migration completo" de "ainda em adm
     porque rsyslog nao foi reiniciado" e similar. False quando arquivo
-    nao existe ainda.
+    nao existe ainda OU quando nao temos permissao para statar (mesma
+    motivacao de _safe_is_file).
     """
-    if not VAR_LOG_FILE.is_file():
+    try:
+        st = VAR_LOG_FILE.stat()
+    except (FileNotFoundError, PermissionError):
         return False
     try:
         import grp
-        st = VAR_LOG_FILE.stat()
         return grp.getgrgid(st.st_gid).gr_name == CLAUDE_AUDIT_GROUP
     except (KeyError, OSError, ImportError):
         return False

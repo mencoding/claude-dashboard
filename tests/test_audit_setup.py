@@ -509,6 +509,43 @@ def test_var_log_owned_by_claude_audit_false_quando_arquivo_ausente(
     assert au._var_log_owned_by_claude_audit() is False
 
 
+def test_detect_state_tolera_permission_error_em_var_log_file(
+    tmp_path, monkeypatch,
+) -> None:
+    """Regression: setup-audit nao deve crashar quando /var/log/claude/tools.log
+    existe mas a sessao do usuario ainda nao carregou o grupo claude-audit
+    (parent dir tem o-x=---). Esse e justamente o cenario em que `setup-audit`
+    precisa rodar para orientar o usuario a fazer `newgrp claude-audit`."""
+    _patch_paths(monkeypatch, tmp_path)
+
+    class _StubPath:
+        def is_file(self):
+            raise PermissionError(13, "Permission denied")
+        def stat(self):
+            raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(au, "VAR_LOG_FILE", _StubPath())
+    state = au._detect_state()
+    assert state.var_log_file_exists is False
+    assert state.var_log_owned_by_claude_audit is False
+
+
+def test_safe_is_file_retorna_false_em_permission_error(tmp_path) -> None:
+    """_safe_is_file engole PermissionError (parent dir sem x para o usuario)."""
+    class _StubPath:
+        def is_file(self):
+            raise PermissionError(13, "Permission denied")
+    assert au._safe_is_file(_StubPath()) is False
+
+
+def test_safe_is_file_propaga_para_paths_normais(tmp_path) -> None:
+    """_safe_is_file delega para is_file() quando nao ha permission error."""
+    f = tmp_path / "x"
+    f.touch()
+    assert au._safe_is_file(f) is True
+    assert au._safe_is_file(tmp_path / "missing") is False
+
+
 def test_root_script_inclui_groupadd_e_chown(tmp_path, monkeypatch) -> None:
     _patch_paths(monkeypatch, tmp_path)
     body = au._root_setup_script()
