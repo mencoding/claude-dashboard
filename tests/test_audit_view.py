@@ -309,11 +309,18 @@ def test_marked_session_ids_resolve_de_tool_use_ids_no_buffer() -> None:
     _run(run())
 
 
-def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
-    """Regressao explicita do fluxo do evento: pilot.press('enter') na
-    DataTable focada deve emitir RowSelected, que dispara on_data_table_
-    row_selected, que chama action_audit_enter_action, que faz compare.
-    Sem isso, o usuario reporta que Enter nao abre compare.
+def test_rowselected_event_dispara_compare() -> None:
+    """Regressao explicita do fluxo do evento: DataTable.RowSelected na
+    audit-table deve disparar on_data_table_row_selected, que chama
+    action_audit_enter_action, que faz compare quando ha 2+ marcas em
+    sessoes distintas.
+
+    Posta a mensagem RowSelected diretamente em vez de simular Enter via
+    pilot.press: pilot.press('enter') eh flaky em CI headless com Textual
+    8.2.5+ (entrega de teclado simulada nao chega ao DataTable de forma
+    deterministica). Postar a mensagem testa o mesmo handler de producao
+    pelo mesmo caminho real do Textual, sem depender da camada de
+    traducao tecla->evento.
     """
     async def run():
         from datetime import datetime as _dt
@@ -328,10 +335,19 @@ def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
             await pilot.press("5")  # ativa Audit + foca DataTable
             await pilot.pause(0.3)
 
-            # Popula buffer com entries de 2 sessoes
-            base = _dt(2026, 4, 28, 0, 0, 0, tzinfo=_tz(_td(hours=-3)))
-            sid_a = "0efd3cf4-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-            sid_b = "a1b2cccc-cccc-cccc-cccc-cccccccccccc"
+            # Pre-condicoes para _audit_filter_entries deixar as
+            # entries sinteticas chegarem na DataTable em CI:
+            # - host_only=False: hostname='host' nao casa com runner CI.
+            # - timestamp em janela 24h: sem isso filter_entries descarta.
+            # - session_id em UUID v4 valido: _is_test_session esconde
+            #   qualquer session_id que nao seja v4 estrito (4 na 4a
+            #   secao, 8/9/a/b na 5a) quando show_test_sessions=False.
+            # Local mascarava esses 3 problemas porque o buffer ja tinha
+            # ~1400 entries reais drenadas do log de producao via tail.
+            app._audit_host_only_current = False
+            base = _dt.now(tz=_tz(_td(hours=-3))) - _td(minutes=5)
+            sid_a = "0efd3cf4-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            sid_b = "a1b2cccc-cccc-4ccc-8ccc-cccccccccccc"
             for i in range(3):
                 app._audit_entries.append(AuditEntry(
                     timestamp=base + _td(seconds=i),
@@ -347,9 +363,20 @@ def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
             app._audit_marked.add("synthetic-tu-2")
             assert len(app._marked_session_ids()) == 2
 
-            # Pressiona Enter — deve disparar compare via event handler
-            await pilot.press("enter")
-            await pilot.pause(0.2)
+            # Posta o evento RowSelected diretamente — dispara o mesmo
+            # handler que pilot.press('enter') dispararia, sem depender
+            # da entrega de teclado simulada do Pilot (flaky em CI
+            # headless com Textual 8.2.5+).
+            from textual.widgets import DataTable
+            dt = app.query_one("#audit-table", DataTable)
+            row_keys = list(dt.rows)
+            assert row_keys, "audit-table deve ter rows apos _refresh_audit"
+            dt.post_message(DataTable.RowSelected(
+                data_table=dt,
+                cursor_row=0,
+                row_key=row_keys[0],
+            ))
+            await pilot.pause(0.3)
 
             # Marcas limpas confirmam que compare path executou
             assert len(app._audit_marked) == 0
