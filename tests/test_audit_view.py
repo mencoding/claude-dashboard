@@ -335,6 +335,14 @@ def test_rowselected_event_dispara_compare() -> None:
             await pilot.press("5")  # ativa Audit + foca DataTable
             await pilot.pause(0.3)
 
+            # Desliga filtro implicito por hostname: entries sinteticas
+            # tem hostname="host", que nao casa com socket.gethostname()
+            # em CI runner — sem isso, _audit_filter_entries remove tudo
+            # e dt.rows fica [], quebrando o teste em CI mesmo com
+            # _audit_entries populado. Local mascarava porque o buffer
+            # ja tinha entries reais do hostname local.
+            app._audit_host_only_current = False
+
             # Popula buffer com entries de 2 sessoes
             base = _dt(2026, 4, 28, 0, 0, 0, tzinfo=_tz(_td(hours=-3)))
             sid_a = "0efd3cf4-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -356,7 +364,8 @@ def test_rowselected_event_dispara_compare() -> None:
 
             # Posta o evento RowSelected diretamente — dispara o mesmo
             # handler que pilot.press('enter') dispararia, sem depender
-            # da entrega de teclado simulada do Pilot.
+            # da entrega de teclado simulada do Pilot (flaky em CI
+            # headless com Textual 8.2.5+).
             from textual.widgets import DataTable
             dt = app.query_one("#audit-table", DataTable)
             row_keys = list(dt.rows)
