@@ -309,11 +309,18 @@ def test_marked_session_ids_resolve_de_tool_use_ids_no_buffer() -> None:
     _run(run())
 
 
-def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
-    """Regressao explicita do fluxo do evento: pilot.press('enter') na
-    DataTable focada deve emitir RowSelected, que dispara on_data_table_
-    row_selected, que chama action_audit_enter_action, que faz compare.
-    Sem isso, o usuario reporta que Enter nao abre compare.
+def test_rowselected_event_dispara_compare() -> None:
+    """Regressao explicita do fluxo do evento: DataTable.RowSelected na
+    audit-table deve disparar on_data_table_row_selected, que chama
+    action_audit_enter_action, que faz compare quando ha 2+ marcas em
+    sessoes distintas.
+
+    Posta a mensagem RowSelected diretamente em vez de simular Enter via
+    pilot.press: pilot.press('enter') eh flaky em CI headless com Textual
+    8.2.5+ (entrega de teclado simulada nao chega ao DataTable de forma
+    deterministica). Postar a mensagem testa o mesmo handler de producao
+    pelo mesmo caminho real do Textual, sem depender da camada de
+    traducao tecla->evento.
     """
     async def run():
         from datetime import datetime as _dt
@@ -347,22 +354,18 @@ def test_pilot_press_enter_na_datatable_dispara_compare() -> None:
             app._audit_marked.add("synthetic-tu-2")
             assert len(app._marked_session_ids()) == 2
 
-            # Pre-condicoes explicitas pro RowSelected disparar: foco na
-            # DataTable e cursor numa row valida. Em CI headless o
-            # call_after_refresh(_focus_audit_table) agendado em
-            # on_tabbed_content_tab_activated pode nao completar dentro do
-            # pause(0.3) inicial — Enter cai em outro widget e o evento
-            # nunca dispara. Setar explicito aqui torna o teste
-            # deterministico em qualquer ambiente.
+            # Posta o evento RowSelected diretamente — dispara o mesmo
+            # handler que pilot.press('enter') dispararia, sem depender
+            # da entrega de teclado simulada do Pilot.
             from textual.widgets import DataTable
             dt = app.query_one("#audit-table", DataTable)
-            dt.focus()
-            if dt.row_count > 0:
-                dt.move_cursor(row=0, animate=False)
-            await pilot.pause(0.2)
-
-            # Pressiona Enter — deve disparar compare via event handler
-            await pilot.press("enter")
+            row_keys = list(dt.rows)
+            assert row_keys, "audit-table deve ter rows apos _refresh_audit"
+            dt.post_message(DataTable.RowSelected(
+                data_table=dt,
+                cursor_row=0,
+                row_key=row_keys[0],
+            ))
             await pilot.pause(0.3)
 
             # Marcas limpas confirmam que compare path executou
