@@ -335,21 +335,19 @@ def test_rowselected_event_dispara_compare() -> None:
             await pilot.press("5")  # ativa Audit + foca DataTable
             await pilot.pause(0.3)
 
-            # Desliga filtro implicito por hostname: entries sinteticas
-            # tem hostname="host", que nao casa com socket.gethostname()
-            # em CI runner — sem isso, _audit_filter_entries remove tudo
-            # e dt.rows fica []. Local mascarava porque o buffer ja
-            # tinha entries reais do hostname local.
+            # Pre-condicoes para _audit_filter_entries deixar as
+            # entries sinteticas chegarem na DataTable em CI:
+            # - host_only=False: hostname='host' nao casa com runner CI.
+            # - timestamp em janela 24h: sem isso filter_entries descarta.
+            # - session_id em UUID v4 valido: _is_test_session esconde
+            #   qualquer session_id que nao seja v4 estrito (4 na 4a
+            #   secao, 8/9/a/b na 5a) quando show_test_sessions=False.
+            # Local mascarava esses 3 problemas porque o buffer ja tinha
+            # ~1400 entries reais drenadas do log de producao via tail.
             app._audit_host_only_current = False
-
-            # Popula buffer com entries de 2 sessoes. Timestamp dentro
-            # da janela default (24h) — sem isso o filter_entries
-            # remove as sinteticas em CI onde _audit_entries so contem
-            # elas. Local mascarava porque o buffer ja tinha entries
-            # reais drenadas do log de producao.
             base = _dt.now(tz=_tz(_td(hours=-3))) - _td(minutes=5)
-            sid_a = "0efd3cf4-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-            sid_b = "a1b2cccc-cccc-cccc-cccc-cccccccccccc"
+            sid_a = "0efd3cf4-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            sid_b = "a1b2cccc-cccc-4ccc-8ccc-cccccccccccc"
             for i in range(3):
                 app._audit_entries.append(AuditEntry(
                     timestamp=base + _td(seconds=i),
